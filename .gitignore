@@ -1,0 +1,17 @@
+# Build output
+build/
+app/build/
+.gradle/
+*.apk
+*.aab
+
+# Local machine configuration
+local.properties
+.idea/
+*.iml
+captures/
+
+# Signing material never belongs in the repository
+keystore/
+*.jks
+*.keystore

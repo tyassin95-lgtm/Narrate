@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Narrate" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#FF07070A</item>
+        <item name="android:navigationBarColor">#FF07070A</item>
+        <item name="android:windowBackground">#FF07070A</item>
+    </style>
+</resources>

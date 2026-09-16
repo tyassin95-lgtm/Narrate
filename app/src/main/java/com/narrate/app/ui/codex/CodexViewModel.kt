@@ -1,0 +1,126 @@
+package com.narrate.app.ui.codex
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.narrate.app.container
+import com.narrate.app.data.entity.*
+import com.narrate.app.engine.ImageSubject
+import com.narrate.app.engine.MemoryIndex
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+data class CodexUiState(
+    val world: WorldEntity? = null,
+    val characters: List<CharacterEntity> = emptyList(),
+    val locations: List<LocationEntity> = emptyList(),
+    val links: List<LocationLinkEntity> = emptyList(),
+    val items: List<ItemEntity> = emptyList(),
+    val factions: List<FactionEntity> = emptyList(),
+    val threads: List<ThreadEntity> = emptyList(),
+    val memories: List<MemoryEntity> = emptyList(),
+    val chapters: List<ChapterEntity> = emptyList(),
+    val images: List<ImageEntity> = emptyList(),
+    val issues: List<ContinuityIssueEntity> = emptyList(),
+    val turns: List<TurnEntity> = emptyList(),
+    val generating: Boolean = false,
+    val message: String? = null
+) {
+    val player: CharacterEntity? get() = characters.firstOrNull { it.isPlayer }
+    val npcs: List<CharacterEntity> get() = characters.filter { !it.isPlayer }
+    fun imagePath(id: String?): String? = images.firstOrNull { it.id == id }?.filePath
+    fun imagesFor(subjectId: String): List<ImageEntity> = images.filter { it.subjectIds.contains(subjectId) }
+    fun locationName(id: String?): String = locations.firstOrNull { it.id == id }?.name ?: "unknown"
+}
+
+/** Backing state for everything the player can browse about a world. */
+class CodexViewModel(application: Application, private val worldId: String) : AndroidViewModel(application) {
+
+    private val container = application.container
+    private val repo = container.repository
+    private val transient = MutableStateFlow(false to null as String?)
+
+    val state: StateFlow<CodexUiState> = combine(
+        combine(
+            repo.observeWorld(worldId),
+            repo.observeCharacters(worldId),
+            repo.observeLocations(worldId),
+            repo.observeLinks(worldId)
+        ) { world, characters, locations, links -> listOf(world, characters, locations, links) },
+        combine(
+            repo.observeItems(worldId),
+            repo.observeFactions(worldId),
+            repo.observeThreads(worldId),
+            repo.observeMemories(worldId)
+        ) { items, factions, threads, memories -> listOf(items, factions, threads, memories) },
+        combine(
+            repo.observeChapters(worldId),
+            repo.observeImages(worldId),
+            repo.observeIssues(worldId),
+            repo.observeTurns(worldId)
+        ) { chapters, images, issues, turns -> listOf(chapters, images, issues, turns) },
+        transient
+    ) { first, second, third, flags ->
+        @Suppress("UNCHECKED_CAST")
+        CodexUiState(
+            world = first[0] as WorldEntity?,
+            characters = first[1] as List<CharacterEntity>,
+            locations = first[2] as List<LocationEntity>,
+            links = first[3] as List<LocationLinkEntity>,
+            items = second[0] as List<ItemEntity>,
+            factions = second[1] as List<FactionEntity>,
+            threads = second[2] as List<ThreadEntity>,
+            memories = second[3] as List<MemoryEntity>,
+            chapters = third[0] as List<ChapterEntity>,
+            images = third[1] as List<ImageEntity>,
+            issues = third[2] as List<ContinuityIssueEntity>,
+            turns = third[3] as List<TurnEntity>,
+            generating = flags.first,
+            message = flags.second
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CodexUiState())
+
+    private val _memoryFilter = MutableStateFlow("")
+    val memoryFilter: StateFlow<String> = _memoryFilter.asStateFlow()
+
+    fun setMemoryFilter(value: String) { _memoryFilter.value = value }
+
+    fun memoriesFor(character: CharacterEntity, memories: List<MemoryEntity>): List<MemoryEntity> =
+        MemoryIndex.forSubject(memories, character.id, character.name)
+
+    fun togglePin(memory: MemoryEntity) {
+        viewModelScope.launch { repo.setMemoryPinned(memory.id, !memory.pinned) }
+    }
+
+    fun generatePortrait(characterId: String) = generate(ImageSubject.Character(characterId))
+    fun generateLocationImage(locationId: String) = generate(ImageSubject.Location(locationId))
+    fun generateItemImage(itemId: String) = generate(ImageSubject.Item(itemId))
+
+    private fun generate(subject: ImageSubject) {
+        viewModelScope.launch {
+            if (transient.value.first) return@launch
+            transient.value = true to null
+            val snapshot = repo.snapshot(worldId, container.settings.current.recentTurnWindow)
+            if (snapshot == null) {
+                transient.value = false to "World not found."
+                return@launch
+            }
+            val result = container.imageDirector.generate(snapshot, subject)
+            transient.value = false to result.fold(
+                onSuccess = { "Saved: ${it.label}" },
+                onFailure = { it.message ?: "The image could not be generated." }
+            )
+        }
+    }
+
+    fun clearMessage() { transient.value = transient.value.first to null }
+
+    fun toggleFavorite(image: ImageEntity) {
+        viewModelScope.launch { repo.setImageFavorite(image.id, !image.favorite) }
+    }
+}
