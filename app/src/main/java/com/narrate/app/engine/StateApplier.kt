@@ -506,7 +506,8 @@ class StateApplier(private val repo: WorldRepository) {
         if (clean.isEmpty()) return existing
         val lines = existing.split("\n").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
         clean.forEach { addition ->
-            if (lines.none { it.equals(addition, ignoreCase = true) }) lines += "- $addition".removePrefix("- ").let { "- $it" }
+            val entry = "- " + addition.removePrefix("- ")
+            if (lines.none { it.equals(entry, ignoreCase = true) }) lines += entry
         }
         return lines.joinToString("\n").truncate(4000)
     }
