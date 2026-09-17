@@ -312,13 +312,18 @@ class StateApplier(private val repo: WorldRepository) {
                 playerDelta.itemsGained.filter { it.isNotBlank() }.forEach { name ->
                     val existing = repo.resolveItem(items, name)
                     if (existing != null) {
-                        val moved = existing.copy(holderId = updatedPlayer.id, locationId = null)
+                        val moved = existing.copy(
+                            holderId = updatedPlayer.id,
+                            ownerId = existing.ownerId ?: updatedPlayer.id,
+                            locationId = null
+                        )
                         items[items.indexOfFirst { it.id == existing.id }] = moved
                         repo.saveItems(listOf(moved))
                     } else {
                         val created = ItemEntity(
                             id = newId(), worldId = worldId, name = name.trim(),
-                            holderId = updatedPlayer.id, firstSeenTurn = turnIndex
+                            ownerId = updatedPlayer.id, holderId = updatedPlayer.id,
+                            firstSeenTurn = turnIndex
                         )
                         items += created
                         repo.saveItems(listOf(created))
@@ -346,7 +351,9 @@ class StateApplier(private val repo: WorldRepository) {
             val created = ItemEntity(
                 id = newId(), worldId = worldId, name = incoming.name.trim(),
                 description = incoming.description, appearance = incoming.appearance,
-                significance = incoming.significance, holderId = holder?.id,
+                significance = incoming.significance,
+                ownerId = findCharacter(incoming.owner)?.id ?: holder?.id,
+                holderId = holder?.id,
                 locationId = if (holder == null) place?.id ?: snapshot.currentLocation?.id else null,
                 firstSeenTurn = turnIndex
             )
@@ -358,6 +365,9 @@ class StateApplier(private val repo: WorldRepository) {
             val holder = findCharacter(update.heldBy)
             val place = findLocation(update.location)
             val merged = item.copy(
+                // Ownership only moves when the narrator says it has. Handing someone your
+                // jacket makes them the holder, never the owner.
+                ownerId = findCharacter(update.owner)?.id ?: item.ownerId ?: holder?.id,
                 holderId = holder?.id ?: if (update.location != null) null else item.holderId,
                 locationId = place?.id ?: if (holder != null) null else item.locationId,
                 state = update.state ?: item.state,

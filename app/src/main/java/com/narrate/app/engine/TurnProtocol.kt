@@ -106,6 +106,8 @@ data class NewItem(
     val description: String = "",
     val appearance: String = "",
     val significance: String = "",
+    /** Whose it is. Defaults to whoever is holding it when it first appears. */
+    val owner: String = "",
     @SerialName("held_by") val heldBy: String = "",
     val location: String = ""
 )
@@ -113,6 +115,8 @@ data class NewItem(
 @Serializable
 data class ItemUpdate(
     val name: String = "",
+    /** Only set when the object genuinely changes hands for good. Lending does not. */
+    val owner: String? = null,
     @SerialName("held_by") val heldBy: String? = null,
     val location: String? = null,
     val state: String? = null
@@ -406,18 +410,20 @@ object TurnParser {
             .map { line -> line.replace(bulletMarker, "") }
             .map { line -> line.trim().removeSurrounding("**").trim() }
             .filter { it.length > 1 }
-            .distinctBy { it.lowercase().take(40) }
+            .distinctBy { it.lowercase().take(60) }
             .take(6)
             .mapIndexed { index, line ->
                 val kind = when {
-                    line.startsWith("\"") || line.contains(Regex("^(Say|Ask|Tell|Reply|Answer|Whisper|Shout)\\b")) -> "SPEECH"
+                    line.startsWith("\"") || line.startsWith("\u201c") ||
+                        line.contains(Regex("^(Say|Ask|Tell|Reply|Answer|Whisper|Shout)\\b")) -> "SPEECH"
                     line.contains(Regex("^(Wait|Observe|Watch|Listen|Study|Examine|Look)\\b")) -> "OBSERVE"
                     else -> "ACTION"
                 }
                 val parts = line.split(" -- ", " | ", limit = 2)
                 Choice(
                     id = "c$index",
-                    label = parts[0].trim().removeSurrounding("**").trim().take(200),
+                    // Spoken options carry the line itself, so they need room to be a line.
+                    label = parts[0].trim().removeSurrounding("**").trim().take(320),
                     detail = parts.getOrNull(1)?.trim().orEmpty().take(240),
                     kind = kind
                 )

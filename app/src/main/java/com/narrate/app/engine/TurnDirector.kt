@@ -11,6 +11,7 @@ import com.narrate.app.data.entity.ChapterEntity
 import com.narrate.app.data.entity.TurnEntity
 import com.narrate.app.data.entity.WorldEntity
 import com.narrate.app.data.prefs.SettingsStore
+import com.narrate.app.engine.ChoiceGuard.Verdict
 import com.narrate.app.data.repo.WorldRepository
 import com.narrate.app.data.repo.WorldSnapshot
 import kotlinx.serialization.builtins.ListSerializer
@@ -77,9 +78,15 @@ class TurnDirector(
         var parsed = TurnParser.parse(response.text)
         var repaired = false
 
+        // Suggestions are held to the same standard as the prose: one that offers something the
+        // player is not carrying, or hands back a coat that was never theirs, is a continuity
+        // error the player would be invited to commit.
+        var verdict = ChoiceGuard.vet(snapshot, parsed.choices)
+        parsed = parsed.copy(choices = verdict.kept)
+
         // A turn that arrived without choices or without a state block is not finished. Rather
         // than papering over it in the UI, ask the model to complete what it started.
-        if (!parsed.isComplete) {
+        if (!parsed.isComplete || parsed.choices.size < MIN_CHOICES) {
             val completion = complete(
                 worldId = worldId,
                 turnIndex = turnIndex,
@@ -88,14 +95,34 @@ class TurnDirector(
                 firstReply = response.text,
                 parsed = parsed,
                 wasCutOff = response.truncated || parsed.looksUnfinished,
+                choiceProblems = verdict.problems(),
                 choice = choice,
                 apiKey = apiKey,
                 config = config
             )
             if (completion != null) {
-                parsed = completion
+                val secondLook = ChoiceGuard.vet(snapshot, completion.choices)
+                parsed = completion.copy(
+                    choices = secondLook.kept.ifEmpty { parsed.choices }
+                )
+                verdict = Verdict(parsed.choices, verdict.rejected + secondLook.rejected)
                 repaired = true
             }
+        }
+
+        if (verdict.rejected.isNotEmpty()) {
+            repo.saveIssues(
+                ContinuityGuard.Report().apply {
+                    verdict.rejected.forEach { rejection ->
+                        add(
+                            ContinuityGuard.SEVERITY_WARNING,
+                            "suggested-action",
+                            "A suggested action contradicted the world: ${rejection.reason}.",
+                            "It was not offered to the player."
+                        )
+                    }
+                }.toEntities(worldId, turnIndex)
+            )
         }
 
         val applied = applier.apply(snapshot, parsed.delta, turnIndex, parsed.narration)
@@ -150,15 +177,16 @@ class TurnDirector(
         firstReply: String,
         parsed: ParsedTurn,
         wasCutOff: Boolean,
+        choiceProblems: List<String>,
         choice: com.narrate.app.data.prefs.ModelChoice,
         apiKey: String,
         config: com.narrate.app.data.prefs.AppSettings
     ): ParsedTurn? {
-        val needsChoices = parsed.choices.isEmpty()
+        val needsChoices = parsed.choices.size < MIN_CHOICES
         val needsState = !parsed.stateParsed
         if (!needsChoices && !needsState && !wasCutOff) return null
 
-        val instruction = Prompts.repairInstruction(wasCutOff, needsChoices, needsState)
+        val instruction = Prompts.repairInstruction(wasCutOff, needsChoices, needsState, choiceProblems)
         val repairMessages = messages +
             ChatMessage.assistant(firstReply.takeLast(MAX_ECHOED_REPLY)) +
             ChatMessage.user(instruction)
@@ -292,6 +320,8 @@ class TurnDirector(
         }
 
         appendLine()
+        appendLine(SceneBrief.render(snapshot, input, kind))
+        appendLine()
         appendLine("# THIS TURN")
         appendLine(
             if (kind == "OPENING") Prompts.openingInstruction(snapshot.world)
@@ -385,6 +415,8 @@ class TurnDirector(
 
     private companion object {
         const val CHAPTER_SIZE = 10
+        /** Fewer than this is not a menu, and is worth a second call to put right. */
+        const val MIN_CHOICES = 2
         /** Enough for choices and a state block, not enough to pay for a second narration. */
         const val REPAIR_TOKENS = 3500
         /** The tail of the first reply is all the model needs to pick up where it stopped. */

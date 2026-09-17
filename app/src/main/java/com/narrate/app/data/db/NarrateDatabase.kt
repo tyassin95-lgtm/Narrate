@@ -27,7 +27,7 @@ import com.narrate.app.data.entity.*
         ContinuityIssueEntity::class,
         UsageEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class NarrateDatabase : RoomDatabase() {
@@ -93,6 +93,18 @@ abstract class NarrateDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Separates who owns an object from who is carrying it. Existing objects are treated
+         * as owned by whoever holds them, which is right for everything except a loan in
+         * progress - and that could not have been recorded before this migration anyway.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN ownerId TEXT")
+                db.execSQL("UPDATE items SET ownerId = holderId WHERE holderId IS NOT NULL")
+            }
+        }
+
         fun get(context: Context): NarrateDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
@@ -100,7 +112,7 @@ abstract class NarrateDatabase : RoomDatabase() {
                 "narrate.db"
             )
                 // A save is the player's world. Never destroy one on a routine upgrade.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
                 .also { instance = it }

@@ -513,7 +513,8 @@ class WorldForge(
                 listOf(
                     ItemEntity(
                         id = newId(), worldId = worldId, name = name.trim(),
-                        holderId = playerCharacter.id, significance = "Carried from the beginning."
+                        ownerId = playerCharacter.id, holderId = playerCharacter.id,
+                        significance = "Carried from the beginning."
                     )
                 )
             )

@@ -168,8 +168,10 @@ object Prompts {
             "description": "revised description", "atmosphere": "...", "controlled_by": "...", "discovered": true }],
           "links_new": [{ "from": "Place A", "to": "Place B", "travel_time": "half a day", "mode": "on foot", "description": "" }],
           "items_new": [{ "name": "Object", "description": "", "appearance": "how it looks",
-            "significance": "why it matters", "held_by": "character name", "location": "place name" }],
-          "items_update": [{ "name": "Object", "held_by": "new holder", "location": "new place", "state": "damaged" }],
+            "significance": "why it matters", "owner": "whose it is", "held_by": "who has it now",
+            "location": "place name" }],
+          "items_update": [{ "name": "Object", "held_by": "who has it now", "owner": "only when it
+            changes hands for good", "location": "new place", "state": "damaged" }],
           "factions": [{ "name": "Faction", "description": "", "goals": "", "leader": "", "territory": "",
             "standing_delta": -10, "status": "ACTIVE" }],
           "relationships": [{ "from": "Character A", "to": "Character B", "type": "ally|rival|sibling|lover|debtor",
@@ -184,6 +186,10 @@ object Prompts {
             "change": "what now looks different", "permanent": true }],
           "image_suggestion": "The single most striking image of this moment, in one sentence."
         }
+
+        On objects: "held_by" is who physically has it, "owner" is whose it is. Lending, borrowing
+        and carrying something for someone change the holder and never the owner. Only set "owner"
+        when an object is genuinely given away, sold, stolen or inherited.
 
         Record 1-4 memories on a normal turn, more when a lot happened. Record every movement, every
         new face, every place the player learns of, and every consequence that will still matter later.
@@ -205,15 +211,59 @@ object Prompts {
         { ...the JSON state block... }
         ${TurnProtocol.END}
 
-        The CHOICES section is never optional. Every completed turn ends with three to five of them,
-        even on the quietest turn, even when nothing is at stake, even when the scene is calm. A turn
-        without choices is an unfinished turn.
+        THE CHOICES
+
+        The CHOICES section is never optional. Every completed turn ends with three to five of
+        them, even on the quietest turn, even when nothing is at stake. A turn without choices is
+        an unfinished turn.
 
         ${style.choiceGuidance}
 
-        Each must be genuinely possible in this exact moment and phrased as a single short line.
-        They are suggestions on a menu the player is free to ignore; the player may type anything at all,
-        and when they do, you honour it rather than steering them back to your list.
+        Write them as a game master who was paying attention to this exact moment - not as a
+        menu bolted onto the end of the scene. Before writing them, ask yourself what just
+        happened, what was just said, what the player can see, what they are holding, and what
+        the person in front of them needs. The answers are the choices.
+
+        1. ANSWER THE MOMENT. If a character asked the player something, one option is the player
+           answering it. If someone is hurt, cold, frightened, lost, furious or crying, the
+           options include the obvious human responses to that. If something just appeared,
+           moved, broke or arrived, the options engage with it. A choice that would fit equally
+           well three turns ago is a wasted choice.
+
+        2. SPEECH IS WRITTEN OUT, NOT DESCRIBED. When the natural thing is to say something, put
+           the actual words in quotation marks, as the player would say them:
+             "Are you okay? You look frozen. Do you want my coat?"
+           not: Ask if she needs help.
+           Write the player's voice as established in their dossier - their manner, their
+           vocabulary, what they know and do not know. Two or three sentences at most.
+
+        3. MAKE THEM DIFFERENT IN KIND, NOT IN WORDING. Four ways of saying "help her" is one
+           choice, not four. Vary the intent behind them: kind, curious, guarded, blunt, funny,
+           self-interested, practical, evasive, or simply leaving. Some turns call for speech,
+           some for doing something physical, some for looking closer, some for going somewhere,
+           some for waiting and saying nothing. At least one option should be something a
+           different sort of person would choose.
+
+        4. USE WHAT IS ACTUALLY THERE. Only offer an object the player is holding, according to
+           the state file. Only address people who are present. Only reference things the player
+           has actually learned. If an object is the player's but someone else is holding it, it
+           is still the player's - never write the player asking to give it back to them or
+           treating it as theirs.
+
+        5. NEVER CONFUSE WHO IS WHO. Every option is something the player does or says. Never
+           write an option in which the player is spoken to, described from outside, or referred
+           to by name as though they were someone else in the room, and never write an option
+           that belongs to an NPC's point of view. If an NPC did something, the option is the
+           player's response to it.
+
+        Format: one option per line, no numbering needed. A short trailing clause after " -- "
+        may say what the player is going for, if it is not obvious:
+          "I'm not going anywhere until you tell me what happened." -- refuse to be put off
+          Offer her the blanket from your bag and say nothing
+          Wait, and let the silence do the work
+
+        They are suggestions on a menu the player is free to ignore; the player may type anything
+        at all, and when they do, you honour it rather than steering them back to your list.
 
         Budget your length so that all four sections fit in one reply. If you are running long, shorten
         the narration rather than dropping the choices or the state block.
@@ -285,7 +335,8 @@ object Prompts {
     fun repairInstruction(
         wasCutOff: Boolean,
         needsChoices: Boolean,
-        needsState: Boolean
+        needsState: Boolean,
+        choiceProblems: List<String> = emptyList()
     ): String = buildString {
         if (wasCutOff) {
             appendLine("Your last reply was cut off before it was finished.")
@@ -312,6 +363,16 @@ object Prompts {
         if (needsChoices) {
             appendLine("Under ${TurnProtocol.CHOICES}, give three to five things the player could do next,")
             appendLine("one per line, each possible in the situation your narration just left them in.")
+            if (choiceProblems.isNotEmpty()) {
+                appendLine()
+                appendLine("These were rejected because they contradicted the world state:")
+                choiceProblems.forEach { appendLine("  - $it") }
+                appendLine(
+                    "Read the state file again before writing new ones. Check who is present, what " +
+                        "the player is actually holding, whose each object is, and that every option " +
+                        "is something the player themselves does or says."
+                )
+            }
         }
         if (needsState) {
             appendLine("Under ${TurnProtocol.STATE}, give the JSON state block for everything that happened")

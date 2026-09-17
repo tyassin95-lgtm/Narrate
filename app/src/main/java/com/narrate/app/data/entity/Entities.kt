@@ -153,6 +153,12 @@ data class ItemEntity(
     val description: String = "",
     val appearance: String = "",
     val significance: String = "",
+    /**
+     * Who the object belongs to, which is not the same as who is holding it. A jacket lent to
+     * someone shivering is still the lender's, and the world has to keep knowing that.
+     */
+    val ownerId: String? = null,
+    /** Who physically has it right now. */
     val holderId: String? = null,
     val locationId: String? = null,
     val state: String = "",

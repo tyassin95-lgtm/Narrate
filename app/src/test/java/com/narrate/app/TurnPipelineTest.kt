@@ -434,6 +434,190 @@ class TurnPipelineTest {
         assertEquals("Day 1, night", repo.world(worldId)!!.storyTime)
     }
 
+    // --- suggested actions -------------------------------------------------------------
+
+    @Test
+    fun `a lent object stays the player's, and the choice offering it back is dropped`() = runBlocking {
+        // Turn one: Adrian gives Liv his jacket because she is freezing.
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            You shrug out of the jacket and hold it out before you can think better of it.
+            ===CHOICES===
+            - Wait and see if she takes it
+            - "Keep it. I'm two streets away."
+            ===STATE===
+            {
+              "story_time": "Day 1, 2:02 AM",
+              "summary": "Vale lent Liv his jacket.",
+              "characters_new": [{"name": "Liv Marchetti", "location": "Old Harbour",
+                "appearance": "Dark curls, soaked through."}],
+              "items_new": [{"name": "wool jacket", "owner": "Vale", "held_by": "Liv Marchetti",
+                "significance": "Lent on the first night."}]
+            }
+            ===END===
+            """.trimIndent()
+        )
+        director.take(worldId, "Offer her your jacket", "ACTION")
+
+        val jacket = repo.itemDao.all(worldId).single { it.name.contains("jacket") }
+        val player = repo.characterDao.player(worldId)!!
+        val liv = repo.characterDao.all(worldId).single { it.name.contains("Liv") }
+        assertEquals("it is still his", player.id, jacket.ownerId)
+        assertEquals("she is the one wearing it", liv.id, jacket.holderId)
+
+        // Turns later, the narrator offers to give it back to her.
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            Her door sticks on the frame. She gets it open with a shoulder.
+            ===CHOICES===
+            - Ask if she wants her jacket back
+            - "Get inside before you freeze."
+            - Wait until the door closes before you go
+            ===STATE===
+            {"story_time": "Day 1, 2:40 AM", "summary": "They reached her door."}
+            ===END===
+            """.trimIndent()
+        )
+        val result = director.take(worldId, "Walk her home", "ACTION")
+        assertTrue(result.isSuccess)
+
+        val offered = result.getOrThrow().parsed.choices.map { it.label }
+        assertTrue("the ownership inversion must not reach the player", offered.none { it.contains("her jacket back") })
+        assertEquals("the sound ones survive", 2, offered.size)
+
+        // And it is recorded, so the player can see the guard working.
+        val issues = repo.issueDao.forTurn(worldId, 1)
+        assertTrue(issues.any { it.category == "suggested-action" && it.description.contains("jacket") })
+    }
+
+    @Test
+    fun `the narrator is told what the player is holding and what is only lent`() = runBlocking {
+        scripted.enqueue(
+            """
+            ===STATE===
+            {"items_new": [{"name": "wool jacket", "owner": "Vale", "held_by": "Vale"}]}
+            """.trimIndent()
+        )
+        director.take(worldId, "Check your pockets", "ACTION")
+        scripted.prompts.clear()
+
+        scripted.enqueue(minimalResponse("Day 1, noon"))
+        director.take(worldId, "Look around", "ACTION")
+
+        val prompt = scripted.prompts.first()
+        assertTrue(prompt.contains("THIS MOMENT"))
+        assertTrue(prompt.contains("WHAT VALE CAN ACTUALLY USE"))
+        assertTrue(prompt.contains("theirs, in hand, available to use or offer"))
+    }
+
+    @Test
+    fun `a question left hanging is put in front of the narrator`() = runBlocking {
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            She stops on the step and looks back at you. "Do you always walk strangers home?"
+            ===CHOICES===
+            - Say nothing
+            - Shrug
+            ===STATE===
+            {"story_time": "Day 1, 2:40 AM"}
+            ===END===
+            """.trimIndent()
+        )
+        director.take(worldId, "Walk her home", "ACTION")
+        scripted.prompts.clear()
+
+        scripted.enqueue(minimalResponse("Day 1, 2:41 AM"))
+        director.take(worldId, "Think about it", "ACTION")
+
+        val prompt = scripted.prompts.first()
+        assertTrue(prompt.contains("A QUESTION IS HANGING IN THE AIR"))
+        assertTrue(prompt.contains("Do you always walk strangers home?"))
+        assertTrue(prompt.contains("actually answering it"))
+    }
+
+    @Test
+    fun `the narrator is told to write dialogue out rather than describe it`() = runBlocking {
+        scripted.enqueue(minimalResponse("Day 1, noon"))
+        director.take(worldId, "Look around", "ACTION")
+
+        val prompt = scripted.prompts.first()
+        assertTrue(prompt.contains("SPEECH IS WRITTEN OUT, NOT DESCRIBED"))
+        assertTrue(prompt.contains("MAKE THEM DIFFERENT IN KIND, NOT IN WORDING"))
+        assertTrue(prompt.contains("ANSWER THE MOMENT"))
+        assertTrue(prompt.contains("NEVER CONFUSE WHO IS WHO"))
+    }
+
+    @Test
+    fun `when every suggestion is unusable the narrator is asked again, and told why`() = runBlocking {
+        scripted.enqueue(
+            """
+            ===STATE===
+            {"items_new": [{"name": "umbrella", "owner": "Marcus Reyes", "held_by": "Marcus Reyes"}],
+             "characters_new": [{"name": "Marcus Reyes", "location": "Old Harbour"}]}
+            """.trimIndent()
+        )
+        director.take(worldId, "Meet Marcus", "ACTION")
+        scripted.prompts.clear()
+
+        // Both suggestions offer an umbrella the player does not have.
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            The rain comes down harder.
+            ===CHOICES===
+            - Offer her the umbrella
+            - Hand over the umbrella and walk on
+            ===STATE===
+            {"story_time": "Day 1, noon"}
+            ===END===
+            """.trimIndent()
+        )
+        scripted.enqueue(
+            """
+            ===CHOICES===
+            - "Here, get under the awning with me."
+            - Turn your collar up and keep walking
+            - Ask her how far she has to go
+            ===END===
+            """.trimIndent()
+        )
+
+        val result = director.take(worldId, "Stand in the rain", "ACTION")
+        assertTrue(result.isSuccess)
+        assertTrue("a second call was needed", result.getOrThrow().wasRepaired)
+        assertEquals(3, result.getOrThrow().parsed.choices.size)
+
+        val repairPrompt = scripted.prompts.last()
+        assertTrue(repairPrompt.contains("rejected because they contradicted the world state"))
+        assertTrue(repairPrompt.contains("umbrella"))
+    }
+
+    @Test
+    fun `good suggestions are never touched`() = runBlocking {
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            She waits.
+            ===CHOICES===
+            - "Are you okay? You look frozen."
+            - Ask where she is heading
+            - Say nothing and walk on
+            - Yell at her to watch where she is going
+            ===STATE===
+            {"story_time": "Day 1, noon"}
+            ===END===
+            """.trimIndent()
+        )
+        val result = director.take(worldId, "Steady her", "ACTION")
+        assertEquals("no second call should be needed", 1, scripted.calls)
+        assertEquals(4, result.getOrThrow().parsed.choices.size)
+        assertEquals("SPEECH", result.getOrThrow().parsed.choices.first().kind)
+        assertTrue(repo.issueDao.forTurn(worldId, 0).none { it.category == "suggested-action" })
+    }
+
     // --- pacing ---------------------------------------------------------------------------
 
     @Test

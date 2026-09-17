@@ -2,6 +2,7 @@ package com.narrate.app.engine
 
 import com.narrate.app.core.truncate
 import com.narrate.app.data.entity.CharacterEntity
+import com.narrate.app.data.entity.ItemEntity
 import com.narrate.app.data.entity.LocationEntity
 import com.narrate.app.data.repo.WorldSnapshot
 
@@ -71,9 +72,23 @@ object WorldDigest {
             if (player.knowledge.isNotBlank()) appendLine("Knows: ${player.knowledge.truncate(1200)}")
             val inventory = snapshot.playerInventory()
             if (inventory.isNotEmpty()) {
-                appendLine("Carrying: " + inventory.joinToString(", ") {
+                appendLine("Carrying right now: " + inventory.joinToString(", ") {
                     it.name + (if (it.state.isNotBlank()) " (${it.state})" else "")
                 })
+            }
+            val lentOut = snapshot.items.filter {
+                it.ownerId == player.id && it.holderId != null && it.holderId != player.id
+            }
+            if (lentOut.isNotEmpty()) {
+                appendLine(
+                    "Theirs, but currently with someone else: " + lentOut.joinToString(", ") { item ->
+                        "${item.name} (with ${snapshot.characterById(item.holderId)?.name ?: "someone"})"
+                    }
+                )
+                appendLine(
+                    "Those remain the player's property. Never write the player asking for them back " +
+                        "as though they were borrowed from the other person."
+                )
             }
         }
     }
@@ -147,14 +162,36 @@ object WorldDigest {
             appendLine()
             appendLine("## TRACKED OBJECTS")
             significantItems.take(40).forEach { item ->
-                val holder = snapshot.characterById(item.holderId)?.name
-                val where = holder ?: snapshot.locationById(item.locationId)?.name ?: "unplaced"
                 appendLine(
-                    "- ${item.name}: with $where." +
+                    "- ${item.name}: ${whereabouts(snapshot, item)}" +
                         (if (item.state.isNotBlank()) " State: ${item.state}." else "") +
                         (if (item.significance.isNotBlank()) " ${item.significance.truncate(140)}" else "")
                 )
             }
+        }
+    }
+
+    /**
+     * Where an object is and whose it is.
+     *
+     * These are different questions, and conflating them is how a jacket lent to someone
+     * shivering became hers, with the narrator then offering to give it back to her.
+     */
+    private fun whereabouts(snapshot: WorldSnapshot, item: ItemEntity): String {
+        fun name(id: String?): String? = snapshot.characterById(id)?.let {
+            if (it.isPlayer) "${it.name} (the player)" else it.name
+        }
+        val owner = name(item.ownerId)
+        val holder = name(item.holderId)
+        val place = snapshot.locationById(item.locationId)?.name
+        return when {
+            owner != null && holder != null && item.ownerId != item.holderId ->
+                "belongs to $owner, currently held by $holder. It is lent, not given - it is still $owner's."
+            holder != null -> "carried by $holder, whose it is."
+            owner != null && place != null -> "belongs to $owner, left at $place."
+            place != null -> "at $place."
+            owner != null -> "belongs to $owner."
+            else -> "whereabouts unrecorded."
         }
     }
 

@@ -155,6 +155,39 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun `existing objects gain an owner without losing their holder`() {
+        NarrateDatabase.MIGRATION_1_2.migrate(db)
+        db.execSQL("CREATE TABLE characters (id TEXT NOT NULL PRIMARY KEY, worldId TEXT NOT NULL, name TEXT NOT NULL)")
+        NarrateDatabase.MIGRATION_2_3.migrate(db)
+        db.execSQL(
+            """
+            CREATE TABLE items (
+                id TEXT NOT NULL PRIMARY KEY,
+                worldId TEXT NOT NULL,
+                name TEXT NOT NULL,
+                holderId TEXT,
+                locationId TEXT
+            )
+            """.trimIndent()
+        )
+        db.execSQL("INSERT INTO items VALUES ('i1', 'w1', 'wool jacket', 'pc', NULL)")
+        db.execSQL("INSERT INTO items VALUES ('i2', 'w1', 'park bench', NULL, 'loc1')")
+
+        NarrateDatabase.MIGRATION_3_4.migrate(db)
+
+        db.query("SELECT id, name, ownerId, holderId FROM items ORDER BY id").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("wool jacket", cursor.getString(1))
+            assertEquals("whoever held it is treated as its owner", "pc", cursor.getString(2))
+            assertEquals("pc", cursor.getString(3))
+
+            assertTrue(cursor.moveToNext())
+            assertEquals("park bench", cursor.getString(1))
+            assertEquals("something nobody holds has no owner", null, cursor.getString(2))
+        }
+    }
+
     private companion object {
         const val DB_NAME = "migration-test.db"
     }

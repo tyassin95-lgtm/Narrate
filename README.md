@@ -43,8 +43,10 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
   it and where it happened - and once a place or an object has been drawn, its picture becomes
   its icon on the map and in the inventory. Images can be deleted, and anything that was using
   one falls back to the next picture of that subject rather than losing its face.
-- **Suggestions you can edit.** Tapping a suggested action loads it into the input box to read,
-  rewrite or discard. Nothing is sent until you press send.
+- **Suggestions worth reading.** Options are written from the moment actually in front of you -
+  the question just asked, the person shivering in front of you, what is in your hands - with
+  spoken options written out as the words you would say. They are checked against the world
+  before you see them, and tapping one loads it into the input box to edit rather than sending it.
 
 ---
 
@@ -125,7 +127,25 @@ into the model's token ceiling mid-sentence - Narrate does not shrug and show an
   from exactly where it stopped, never rewriting what the player has already read. The first
   reply's state block stays authoritative so nothing is applied twice.
 
-### 7. Slow generations, and generations that return nothing
+### 7. Suggested actions are part of continuity, not decoration
+
+Options used to be generic because the narrator was only told to produce some. It is now given a
+**scene brief** - how the last turn ended, any question still hanging in the air, who is present
+and what state they are in, what the player is holding, and what is theirs but currently lent
+out - and told to write options that answer that moment, with speech written out in full and each
+option differing in intent rather than in wording.
+
+They are then vetted against the world state by `ChoiceGuard` before the player sees them. It
+drops an option that offers something the player is not carrying, hands back an object that was
+never the other person's, addresses the player as though they were someone else, speaks in an
+NPC's voice, or talks to someone who is not there. Rejections are logged in the continuity log
+and fed back to the narrator, which is asked again when too few survive.
+
+The underlying data was part of the problem: an object had a holder but no owner, so a jacket
+lent to someone shivering genuinely became theirs in the world state. Objects now record both,
+and lending never transfers ownership.
+
+### 8. Slow generations, and generations that return nothing
 
 World building on a reasoning model is legitimately slow, and a reasoning model can spend its
 entire response budget thinking and return an empty message - which looks exactly like a hang.
@@ -138,7 +158,7 @@ entire response budget thinking and return an empty message - which looks exactl
   has a cancel that actually cancels. A failure returns the player to the step they came from
   with the reason, instead of a spinner that never ends.
 
-### 8. A world that moves on its own
+### 9. A world that moves on its own
 
 `WorldSimulator` runs before each turn: NPCs advance along their routines, active threads press
 for their next beat, people who like or hate you act on the time that has passed, and unresolved
@@ -192,7 +212,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 152 tests covering parsing, continuity, canon, imagery, cost and persistence
+./gradlew testDebugUnitTest         # 183 tests covering parsing, continuity, canon, imagery, cost and persistence
 ```
 
 Without a keystore the release APK is signed with the debug key so it still installs.
@@ -256,7 +276,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 152 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 183 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
@@ -284,3 +304,5 @@ rather than left spinning. A fifth covers the album: deleting an image releases 
 map icon, inventory icon, cover and visual reference that pointed at it, falling back to the
 subject's next surviving picture. A sixth covers what an object is: a textbook must not wear its
 owner's face, a badge must carry it, and a badge must be allowed the writing that makes it a badge.
+A seventh covers suggested actions, including the reported case: a jacket lent to an NPC stays the
+player's, and the option offering to give it back to her never reaches the screen.
