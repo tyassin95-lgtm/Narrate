@@ -1,5 +1,6 @@
 package com.narrate.app.engine
 
+import com.narrate.app.core.nameSimilarity
 import com.narrate.app.core.newId
 import com.narrate.app.core.truncate
 import com.narrate.app.data.entity.*
@@ -154,6 +155,17 @@ class StateApplier(private val repo: WorldRepository) {
 
         // 2. New people, after deduplication against the existing roster.
         delta.charactersNew.filter { it.name.isNotBlank() }.forEach { incoming ->
+            // The protagonist is the player's, and only theirs. A narrator that introduces
+            // someone sharing their name is contradicting canon, not adding to the cast.
+            val player = characters.firstOrNull { it.isPlayer }
+            if (player != null && nameSimilarity(player.name, incoming.name) >= 0.85) {
+                report.add(
+                    ContinuityGuard.SEVERITY_WARNING, "player-identity",
+                    "Tried to introduce ${incoming.name}, which is the player character's name.",
+                    "Ignored. The player character is authored by the player and cannot be duplicated."
+                )
+                return@forEach
+            }
             val duplicate = ContinuityGuard.findExisting(characters, incoming.name)
             if (duplicate != null) {
                 report.add(

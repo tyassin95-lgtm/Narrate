@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -53,25 +54,15 @@ enum class ModelRole(val label: String, val description: String) {
 }
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
+
     private val store = application.container.settings
     private val repository = application.container.repository
-
-    /** Every recorded call, newest first, across every world. */
-    val usage: StateFlow<List<UsageEntity>> = repository.observeAllUsage()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    init {
-        // Ask each configured provider what it serves, so the picker opens on a current list
-        // rather than on the built-in fallback.
-        ProviderId.entries.filter { store.hasApiKey(it) }.forEach { refreshModels(it) }
-    }
+    private val modelCache = application.container.modelCache
 
     val settings: StateFlow<AppSettings> = store.settings
 
-    private val _models = MutableStateFlow<Map<ProviderId, List<ModelInfo>>>(
-        ProviderId.entries.associateWith { ProviderRegistry.get(it).catalog() }
-    )
-    val models: StateFlow<Map<ProviderId, List<ModelInfo>>> = _models.asStateFlow()
+    /** Discovered model lists, cached in the container so they outlive this view model. */
+    val models: StateFlow<Map<ProviderId, List<ModelInfo>>> = modelCache.models
 
     private val _loadingModels = MutableStateFlow<ProviderId?>(null)
     val loadingModels: StateFlow<ProviderId?> = _loadingModels.asStateFlow()
@@ -79,11 +70,31 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    /** Every recorded call, newest first, across every world. */
+    val usage: StateFlow<List<UsageEntity>> = repository.observeAllUsage()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    // Deliberately no init block. A coroutine started while this object is still being
+    // constructed runs before the properties below it exist, and anything it throws has no
+    // handler to catch it - which is how opening Settings after a restart used to kill the
+    // app. Start-up work belongs in refreshConfiguredProviders, called once the screen is
+    // composed and the view model is fully built.
+
     fun apiKey(provider: ProviderId): String = store.apiKey(provider)
 
     fun setApiKey(provider: ProviderId, value: String) {
         store.setApiKey(provider, value)
         if (value.isNotBlank()) refreshModels(provider, announce = true)
+    }
+
+    /**
+     * Called when the screen appears. Asks any provider that has a key, and has not already
+     * answered this session, what it serves - so the picker opens on a current list.
+     */
+    fun refreshConfiguredProviders() {
+        ProviderId.entries
+            .filter { store.hasApiKey(it) && !modelCache.hasDiscovered(it) }
+            .forEach { refreshModels(it) }
     }
 
     /** Ask the provider what it actually serves, so the list is never stale. */
@@ -93,13 +104,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             val result = runCatching { ProviderRegistry.get(provider).listModels(store.apiKey(provider)) }
             _loadingModels.value = null
             result.onSuccess { list ->
-                if (list.isNotEmpty()) {
-                    _models.value = _models.value + (provider to list)
-                    if (announce) {
-                        val text = list.count { it.supportsText }
-                        val image = list.count { it.supportsImageGeneration }
-                        _message.value = "${provider.displayName}: $text narration models, $image image models."
-                    }
+                modelCache.put(provider, list)
+                if (announce && list.isNotEmpty()) {
+                    val text = list.count { it.supportsText }
+                    val image = list.count { it.supportsImageGeneration }
+                    _message.value = "${provider.displayName}: $text narration models, $image image models."
                 }
             }.onFailure {
                 if (announce) _message.value = it.message ?: "Could not list models."
@@ -133,6 +142,8 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
     val loading by viewModel.loadingModels.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val usage by viewModel.usage.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) { viewModel.refreshConfiguredProviders() }
 
     Scaffold(
         containerColor = NarrateColors.Background,

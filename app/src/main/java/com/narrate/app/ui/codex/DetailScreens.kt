@@ -96,6 +96,7 @@ fun CharacterDetailScreen(
                 ImageStrip(images, onImage)
             }
             Spacer(Modifier.height(8.dp))
+            InfoRow("In your own words - kept as canon", character.authoredCanon)
             InfoRow("Summary", character.summary)
             InfoRow("Personality", character.personality)
             InfoRow("Backstory", character.backstory)

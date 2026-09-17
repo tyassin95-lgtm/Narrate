@@ -5,6 +5,7 @@ import com.narrate.app.ai.LlmRequest
 import com.narrate.app.ai.ProviderException
 import com.narrate.app.ai.ProviderRegistry
 import com.narrate.app.core.AppJson
+import com.narrate.app.core.nameSimilarity
 import com.narrate.app.core.newId
 import com.narrate.app.data.entity.*
 import com.narrate.app.data.prefs.SettingsStore
@@ -137,6 +138,103 @@ class WorldForge(
         parseList(raw, WorldConcept.serializer())
     }
 
+    /**
+     * Turns what the player wrote about their character into structured fields without
+     * changing any of it.
+     *
+     * This is the path taken whenever the player has written something: their text is the
+     * character, not a brief for inventing one. The name and every stated detail are then
+     * re-checked in code, because a prompt is a request and this is a guarantee.
+     */
+    suspend fun expandCharacter(world: WorldEntity, authored: String): Result<CharacterConcept> =
+        runCatching {
+            require(authored.isNotBlank()) { "Nothing was written to expand." }
+            val raw = ask(
+                system = "You organise a player's own words about their character into structured " +
+                    "fields. You are a scribe, not an author: you never rename, replace, contradict or " +
+                    "quietly improve what you are given. You reply with JSON only.",
+                user = """
+                    ${AuthoredCanon.brief("THE PLAYER'S CHARACTER", authored)}
+
+                    THE WORLD THEY WILL INHABIT
+                    Name: ${world.name}
+                    Genre: ${world.genre}. Tone: ${world.tone}.
+                    Premise: ${world.premise}
+                    ${world.history.takeIf { it.isNotBlank() }?.let { "History: $it" }.orEmpty()}
+                    ${world.rules.takeIf { it.isNotBlank() }?.let { "Rules: $it" }.orEmpty()}
+
+                    Put their character into the fields below.
+
+                    - Copy every detail they gave into the field it belongs in, in their own words
+                      wherever the wording still reads naturally there.
+                    - "name" is exactly the name they used. If they gave a full name, use the full name.
+                    - Fill a field they left empty with something that fits everything they did say,
+                      and keep it modest. Do not invent a dramatic past they did not ask for.
+                    - "appearance" must contain every physical detail they gave, word for word where
+                      possible, because it becomes the permanent visual reference for this character.
+                      You may add neutral specifics they omitted, such as build or age, but you may not
+                      alter one they gave.
+                    - "ties_to_world" connects them to this world without contradicting their text.
+
+                    Reply with ONE JSON object:
+                    {
+                      "name": "", "role": "", "summary": "2-3 sentences",
+                      "personality": "", "backstory": "", "appearance": "", "outfit": "",
+                      "voice": "", "goals": "", "fears": "", "secrets": "",
+                      "starting_items": [""], "ties_to_world": ""
+                    }
+                """.trimIndent(),
+                temperature = 0.4
+            )
+            val json = TurnParser.extractJsonObject(raw)
+                ?: throw IllegalStateException("The model did not return a usable character.")
+            val concept = AppJson.decodeFromString(CharacterConcept.serializer(), json)
+            AuthoredCanon.enforceCharacter(authored, concept).first
+        }
+
+    /**
+     * The same for a world: the player's text becomes the world, organised rather than replaced.
+     */
+    suspend fun expandWorld(
+        authored: String,
+        playStyle: PlayStyle = PlayStyle.BALANCED
+    ): Result<WorldConcept> = runCatching {
+        require(authored.isNotBlank()) { "Nothing was written to expand." }
+        val raw = ask(
+            system = "You organise a player's own words about their world into structured fields. " +
+                "You are a scribe, not an author: you never rename, replace, contradict or quietly " +
+                "improve what you are given. You reply with JSON only.",
+            user = """
+                ${AuthoredCanon.brief("THE PLAYER'S WORLD", authored)}
+
+                Put their world into the fields below.
+
+                - Every name they used - of the world, its places, its people, its factions, its
+                  terminology - appears exactly as they wrote it.
+                - Copy their facts into the fields where they belong. Where they wrote about
+                  history, that is "history"; where they wrote a rule, that is "rules".
+                - Fill only what they left empty, and keep those additions compatible with
+                  everything they did say.
+                - "name" is the name they gave the world. Only invent a title if they gave none.
+
+                The experience they asked for is ${playStyle.label}: ${playStyle.blurb}
+                ${playStyle.buildGuidance}
+
+                Reply with ONE JSON object:
+                {
+                  "name": "", "tagline": "", "genre": "", "tone": "", "premise": "",
+                  "history": "", "rules": "", "themes": "", "art_style": "",
+                  "opening_situation": ""
+                }
+            """.trimIndent(),
+            temperature = 0.4
+        )
+        val json = TurnParser.extractJsonObject(raw)
+            ?: throw IllegalStateException("The model did not return a usable world.")
+        val concept = AppJson.decodeFromString(WorldConcept.serializer(), json)
+        AuthoredCanon.enforceWorld(authored, concept).first
+    }
+
     /** Character concepts that already have hooks into this specific world. */
     suspend fun characterConcepts(
         world: WorldEntity,
@@ -154,10 +252,13 @@ class WorldForge(
                 Premise: ${world.premise}
                 History: ${world.history}
                 Rules: ${world.rules}
-                ${if (world.customPrompt.isNotBlank()) "The player's own direction for this world: ${world.customPrompt}" else ""}
+                ${AuthoredCanon.brief("THE PLAYER'S OWN WORLD TEXT", world.authoredCanon)}
 
                 THE PLAYER'S DIRECTION FOR THEIR CHARACTER
                 "$brief"
+
+                The player has asked to see alternatives, so these may be different people from
+                anyone described above - but nothing here may contradict the world text they wrote.
 
                 Propose $count protagonists who could only exist in this world. Each needs a real
                 connection to it: a debt, a job, a family, a crime, a duty, a wound.
@@ -200,6 +301,8 @@ class WorldForge(
                 user = """
                     Build the starting state of this world.
 
+                    ${AuthoredCanon.brief("THE PLAYER'S OWN WORLD TEXT", customPrompt)}
+
                     WORLD
                     Name: ${concept.name}
                     Tagline: ${concept.tagline}
@@ -209,9 +312,9 @@ class WorldForge(
                     Rules: ${concept.rules}
                     Themes: ${concept.themes}
                     Opening situation: ${concept.openingSituation}
-                    ${if (customPrompt.isNotBlank()) "\nTHE PLAYER'S OWN DIRECTION (absolute authority):\n$customPrompt" else ""}
 
-                    THE PROTAGONIST
+                    THE PROTAGONIST - this person already exists and is the player. Never rename them,
+                    never create another character with their name, and never cast them as an NPC.
                     ${character.name}, ${character.role}. ${character.summary}
                     Backstory: ${character.backstory}
                     Ties to the world: ${character.tiesToWorld}
@@ -280,23 +383,27 @@ class WorldForge(
         playStyle: PlayStyle = PlayStyle.BALANCED
     ): WorldEntity {
         val worldId = newId()
+        // Last line of defence: whatever the model returned, the player's own names win.
+        val enforcedWorld = AuthoredCanon.enforceWorld(customPrompt, concept).first
+        val enforcedCharacter = AuthoredCanon.enforceCharacter(characterPrompt, character).first
         val world = WorldEntity(
             id = worldId,
-            name = concept.name.ifBlank { "Untitled World" },
-            tagline = concept.tagline,
-            genre = concept.genre,
-            tone = concept.tone,
-            premise = concept.premise,
-            history = concept.history,
-            rules = concept.rules,
-            themes = concept.themes,
+            name = enforcedWorld.name.ifBlank { AuthoredCanon.worldName(customPrompt) ?: "Untitled World" },
+            tagline = enforcedWorld.tagline,
+            genre = enforcedWorld.genre,
+            tone = enforcedWorld.tone,
+            premise = enforcedWorld.premise,
+            history = enforcedWorld.history,
+            rules = enforcedWorld.rules,
+            themes = enforcedWorld.themes,
             customPrompt = listOf(customPrompt, characterPrompt).filter { it.isNotBlank() }.joinToString("\n\n"),
+            authoredCanon = customPrompt,
             narrationLength = narrationLength,
             playStyle = playStyle.id,
             contentGuidelines = contentGuidelines,
-            artStyle = concept.artStyle.ifBlank { "Cinematic, film still, natural lighting, high detail" },
+            artStyle = enforcedWorld.artStyle.ifBlank { "Cinematic, film still, natural lighting, high detail" },
             storyTime = build?.startingTime?.ifBlank { "Day 1, morning" } ?: "Day 1, morning",
-            openingNarration = concept.openingSituation
+            openingNarration = enforcedWorld.openingSituation
         )
         repo.saveWorld(world)
 
@@ -350,21 +457,25 @@ class WorldForge(
             ?: withParents.firstOrNull { it.type == "ROOM" || it.type == "BUILDING" }?.id
             ?: withParents.firstOrNull()?.id
 
+        val playerName = enforcedCharacter.name
+            .ifBlank { AuthoredCanon.characterName(characterPrompt).orEmpty() }
+            .ifBlank { "The Traveller" }
         val playerCharacter = CharacterEntity(
             id = newId(),
             worldId = worldId,
-            name = character.name.ifBlank { "The Traveller" },
+            name = playerName,
             isPlayer = true,
-            role = character.role,
-            summary = character.summary,
-            personality = character.personality,
-            backstory = character.backstory,
-            appearance = character.appearance,
-            outfit = character.outfit,
-            voice = character.voice,
-            goals = character.goals,
-            fears = character.fears,
-            secrets = character.secrets,
+            role = enforcedCharacter.role,
+            summary = enforcedCharacter.summary,
+            personality = enforcedCharacter.personality,
+            backstory = enforcedCharacter.backstory,
+            appearance = enforcedCharacter.appearance,
+            outfit = enforcedCharacter.outfit,
+            voice = enforcedCharacter.voice,
+            goals = enforcedCharacter.goals,
+            fears = enforcedCharacter.fears,
+            secrets = enforcedCharacter.secrets,
+            authoredCanon = characterPrompt,
             currentLocationId = startId,
             homeLocationId = startId,
             importance = 5
@@ -379,7 +490,7 @@ class WorldForge(
                 )
             )
         }
-        character.startingItems.filter { it.isNotBlank() }.forEach { name ->
+        enforcedCharacter.startingItems.filter { it.isNotBlank() }.forEach { name ->
             repo.saveItems(
                 listOf(
                     ItemEntity(
@@ -390,7 +501,11 @@ class WorldForge(
             )
         }
 
-        val npcs = build?.characters?.filter { it.name.isNotBlank() }?.map { incoming ->
+        val npcs = build?.characters
+            ?.filter { it.name.isNotBlank() }
+            // The world builder sometimes casts the player as one of the locals. They are not.
+            ?.filter { nameSimilarity(it.name, playerCharacter.name) < 0.85 }
+            ?.map { incoming ->
             val entity = CharacterEntity(
                 id = newId(),
                 worldId = worldId,
@@ -455,8 +570,8 @@ class WorldForge(
         // The player's own words are canon of the highest order, and are always pinned.
         if (customPrompt.isNotBlank()) {
             facts += MemoryEntity(
-                id = newId(), worldId = worldId, kind = "RULE",
-                text = "The player defined this world: $customPrompt",
+                id = newId(), worldId = worldId, kind = "CANON",
+                text = "The player wrote this world themselves, and it is fact: $customPrompt",
                 importance = 5, keywords = MemoryIndex.keywords(customPrompt).joinToString(" "),
                 storyTime = world.storyTime, turnIndex = 0, pinned = true
             )
@@ -473,8 +588,8 @@ class WorldForge(
         }
         if (characterPrompt.isNotBlank()) {
             facts += MemoryEntity(
-                id = newId(), worldId = worldId, kind = "RULE",
-                text = "The player defined their character: $characterPrompt",
+                id = newId(), worldId = worldId, kind = "CANON",
+                text = "The player wrote their own character, and it is fact: $characterPrompt",
                 importance = 5, keywords = MemoryIndex.keywords(characterPrompt).joinToString(" "),
                 storyTime = world.storyTime, turnIndex = 0, pinned = true
             )

@@ -166,7 +166,13 @@ private fun OverviewTab(state: CodexUiState, viewModel: CodexViewModel, onCharac
         item { InfoRow("History", world.history) }
         item { InfoRow("Laws of the world", world.rules) }
         item { InfoRow("Themes", world.themes) }
-        item { InfoRow("Your direction", world.customPrompt) }
+        item {
+            if (world.authoredCanon.isNotBlank()) {
+                InfoRow("Your words - kept as canon", world.authoredCanon)
+            } else {
+                InfoRow("Your direction", world.customPrompt)
+            }
+        }
         item { InfoRow("Visual style", world.artStyle) }
         if (state.factions.isNotEmpty()) {
             item {

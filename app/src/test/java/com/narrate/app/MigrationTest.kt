@@ -103,6 +103,58 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun `the authored canon columns are added without touching existing rows`() {
+        NarrateDatabase.MIGRATION_1_2.migrate(db)
+        // A version 2 characters table, as an installed copy of the app would have it.
+        db.execSQL(
+            """
+            CREATE TABLE characters (
+                id TEXT NOT NULL PRIMARY KEY,
+                worldId TEXT NOT NULL,
+                name TEXT NOT NULL,
+                appearance TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("INSERT INTO characters VALUES ('c1', 'w1', 'Adrian Voss', 'Dark hair, green eyes')")
+
+        NarrateDatabase.MIGRATION_2_3.migrate(db)
+
+        db.query("SELECT name, appearance, authoredCanon FROM characters").use { cursor ->
+            assertTrue("the existing character must survive", cursor.moveToFirst())
+            assertEquals("Adrian Voss", cursor.getString(0))
+            assertEquals("Dark hair, green eyes", cursor.getString(1))
+            assertEquals("a world made before this feature has no authored text", "", cursor.getString(2))
+        }
+        db.query("SELECT playStyle, authoredCanon FROM worlds").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("BALANCED", cursor.getString(0))
+            assertEquals("", cursor.getString(1))
+        }
+    }
+
+    @Test
+    fun `a save from the first release upgrades all the way without losing anything`() {
+        NarrateDatabase.MIGRATION_1_2.migrate(db)
+        db.execSQL("CREATE TABLE characters (id TEXT NOT NULL PRIMARY KEY, worldId TEXT NOT NULL, name TEXT NOT NULL)")
+        db.execSQL("INSERT INTO characters VALUES ('c1', 'w1', 'Vale')")
+        db.execSQL(
+            "INSERT INTO usage_events VALUES ('u1','w1',3,'NARRATION','OPENAI','gpt-5.4',1200,400,0,0.0042,1,123456)"
+        )
+        NarrateDatabase.MIGRATION_2_3.migrate(db)
+
+        db.query("SELECT id, name, storyTime, turnCount FROM worlds").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("Tidewater", cursor.getString(1))
+            assertEquals(11, cursor.getInt(3))
+        }
+        db.query("SELECT count(*) FROM usage_events").use {
+            assertTrue(it.moveToFirst())
+            assertEquals("usage history survives the second upgrade", 1, it.getInt(0))
+        }
+    }
+
     private companion object {
         const val DB_NAME = "migration-test.db"
     }

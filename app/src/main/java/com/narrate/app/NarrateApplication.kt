@@ -2,6 +2,7 @@ package com.narrate.app
 
 import android.app.Application
 import android.content.Context
+import com.narrate.app.ai.ModelCache
 import com.narrate.app.data.prefs.SettingsStore
 import com.narrate.app.data.repo.WorldRepository
 import com.narrate.app.engine.ImageDirector
@@ -12,6 +13,7 @@ import com.narrate.app.engine.WorldForge
 class AppContainer(context: Context) {
     val repository = WorldRepository(context)
     val settings = SettingsStore(context)
+    val modelCache = ModelCache()
     val turnDirector = TurnDirector(repository, settings)
     val imageDirector = ImageDirector(repository, settings)
     val worldForge = WorldForge(repository, settings)

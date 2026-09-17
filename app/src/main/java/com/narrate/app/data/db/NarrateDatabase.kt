@@ -27,7 +27,7 @@ import com.narrate.app.data.entity.*
         ContinuityIssueEntity::class,
         UsageEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class NarrateDatabase : RoomDatabase() {
@@ -82,6 +82,17 @@ abstract class NarrateDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the verbatim text the player wrote for a world and for their character.
+         * Existing saves keep everything; they simply have no authored text on record.
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE worlds ADD COLUMN authoredCanon TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE characters ADD COLUMN authoredCanon TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun get(context: Context): NarrateDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
@@ -89,7 +100,7 @@ abstract class NarrateDatabase : RoomDatabase() {
                 "narrate.db"
             )
                 // A save is the player's world. Never destroy one on a routine upgrade.
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
                 .also { instance = it }

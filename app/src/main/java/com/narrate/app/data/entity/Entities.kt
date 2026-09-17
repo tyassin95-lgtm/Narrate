@@ -24,6 +24,11 @@ data class WorldEntity(
     val themes: String = "",
     /** Raw custom instructions from the player, injected verbatim into every prompt. */
     val customPrompt: String = "",
+    /**
+     * Exactly what the player typed when they created this world, kept word for word.
+     * This outranks every generated field and every recollection the narrator may have.
+     */
+    val authoredCanon: String = "",
     val narrationStyle: String = "Cinematic third-person limited, present tense",
     val narrationLength: String = "LONG",
     /**
@@ -74,6 +79,8 @@ data class CharacterEntity(
     val goals: String = "",
     val fears: String = "",
     val secrets: String = "",
+    /** For the player character: exactly what they wrote about themselves, word for word. */
+    val authoredCanon: String = "",
     /** What this character knows, as a running list. Prevents NPCs knowing things they cannot. */
     val knowledge: String = "",
     val currentLocationId: String? = null,

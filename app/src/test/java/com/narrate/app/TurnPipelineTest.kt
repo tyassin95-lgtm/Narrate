@@ -468,6 +468,32 @@ class TurnPipelineTest {
         assertEquals("SANDBOX", reopened.world(worldId)!!.playStyle)
     }
 
+    @Test
+    fun `the narrator cannot introduce a second character with the player's name`() = runBlocking {
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            Someone calls your name across the quay.
+            ===CHOICES===
+            - Turn around
+            ===STATE===
+            {"story_time": "Day 1, noon",
+             "characters_new": [{"name": "Vale", "role": "a stranger with your name",
+               "location": "Old Harbour"}]}
+            ===END===
+            """.trimIndent()
+        )
+        val result = director.take(worldId, "Walk the quay", "ACTION")
+        assertTrue(result.isSuccess)
+
+        val cast = repo.characterDao.all(worldId)
+        assertEquals("the player must stay unique", 1, cast.count { it.name == "Vale" })
+        assertTrue(cast.first { it.name == "Vale" }.isPlayer)
+        assertTrue(
+            result.getOrThrow().issues.any { it.category == "player-identity" }
+        )
+    }
+
     // --- usage ----------------------------------------------------------------------------
 
     @Test

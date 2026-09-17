@@ -63,6 +63,52 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
         current.copy(step = previous)
     }
 
+    /**
+     * The default action whenever the player has written something: their text becomes the
+     * world, organised into fields. Nothing they wrote is replaced.
+     */
+    fun useWhatIWroteForWorld() {
+        viewModelScope.launch {
+            update { it.copy(generating = true, error = null) }
+            val result = container.worldForge.expandWorld(_state.value.worldPrompt, _state.value.playStyle)
+            update { current ->
+                result.fold(
+                    onSuccess = { current.copy(generating = false, world = it, step = CreateStep.WORLD_DETAILS) },
+                    onFailure = { current.copy(generating = false, error = it.message ?: "Could not reach the model.") }
+                )
+            }
+        }
+    }
+
+    /** The same for the character: expand what they wrote rather than propose someone else. */
+    fun useWhatIWroteForCharacter() {
+        viewModelScope.launch {
+            update { it.copy(generating = true, error = null) }
+            val result = container.worldForge.expandCharacter(worldEntity(), _state.value.characterPrompt)
+            update { current ->
+                result.fold(
+                    onSuccess = { current.copy(generating = false, character = it, step = CreateStep.CHARACTER_DETAILS) },
+                    onFailure = { current.copy(generating = false, error = it.message ?: "Could not reach the model.") }
+                )
+            }
+        }
+    }
+
+    private fun worldEntity(): com.narrate.app.data.entity.WorldEntity {
+        val current = _state.value
+        return com.narrate.app.data.entity.WorldEntity(
+            name = current.world.name,
+            genre = current.world.genre,
+            tone = current.world.tone,
+            premise = current.world.premise,
+            history = current.world.history,
+            rules = current.world.rules,
+            customPrompt = current.worldPrompt,
+            authoredCanon = current.worldPrompt,
+            playStyle = current.playStyle.id
+        )
+    }
+
     fun generateWorldConcepts() {
         viewModelScope.launch {
             update { it.copy(generating = true, error = null) }
@@ -79,8 +125,13 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Choosing a suggestion is the player deciding to use it instead of what they wrote, so
+     * their earlier text stops being canon for this world. Keeping it would mean overriding
+     * the choice they just made with the draft they abandoned.
+     */
     fun chooseWorldConcept(concept: WorldConcept) = update {
-        it.copy(world = concept, step = CreateStep.WORLD_DETAILS)
+        it.copy(world = concept, worldPrompt = "", step = CreateStep.WORLD_DETAILS)
     }
 
     /** Skip the suggestions entirely: the player's own text becomes the world. */
@@ -97,17 +148,7 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
     fun generateCharacterConcepts() {
         viewModelScope.launch {
             update { it.copy(generating = true, error = null) }
-            val current = _state.value
-            val worldEntity = com.narrate.app.data.entity.WorldEntity(
-                name = current.world.name,
-                genre = current.world.genre,
-                tone = current.world.tone,
-                premise = current.world.premise,
-                history = current.world.history,
-                rules = current.world.rules,
-                customPrompt = current.worldPrompt
-            )
-            val result = container.worldForge.characterConcepts(worldEntity, current.characterPrompt)
+            val result = container.worldForge.characterConcepts(worldEntity(), _state.value.characterPrompt)
             update { state ->
                 result.fold(
                     onSuccess = { state.copy(generating = false, characterConcepts = it) },
@@ -117,8 +158,9 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** As above: a chosen suggestion replaces the draft rather than being overruled by it. */
     fun chooseCharacterConcept(concept: CharacterConcept) = update {
-        it.copy(character = concept, step = CreateStep.CHARACTER_DETAILS)
+        it.copy(character = concept, characterPrompt = "", step = CreateStep.CHARACTER_DETAILS)
     }
 
     fun authorCharacterManually() = update { current ->

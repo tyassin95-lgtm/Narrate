@@ -83,7 +83,25 @@ Anything flagged is written to the world's continuity log **and fed back into th
 as an explicit correction, so drift is caught rather than compounded. You can read the whole log
 in Codex → Continuity.
 
-### 5. A turn that arrives incomplete is completed, not patched over
+### 5. What the player writes is fact, not inspiration
+
+Text the player typed themselves outranks everything generated, from creation onward.
+
+- Whenever they have written something, the primary action **expands their text** rather than
+  proposing alternatives: their words become the character or the world, organised into fields.
+  Alternatives are a demoted, explicit choice, and picking one replaces the draft rather than
+  being overruled by it.
+- Their words go into every generation prompt **verbatim**, between markers, with an explicit
+  instruction that names, facts and relationships in it are not the model's to revise.
+- A prompt is a request, so the guarantee is enforced in code as well. `AuthoredCanon` reads the
+  name they declared - "Adrian Voss: ...", "a clerk named Elena", "World name: Tidewater" - and
+  restores it if generation returns anything else.
+- The verbatim text is stored on the world and the character, pinned as `CANON` memory, and
+  injected into the narrator's context on every turn above the derived state.
+- The protagonist cannot be duplicated: a generated cast member or a narrated newcomer sharing
+  the player character's name is dropped and logged, at creation and during play.
+
+### 6. A turn that arrives incomplete is completed, not patched over
 
 A turn is only finished when the player has something to do and the world was updated. When a
 reply arrives without choices or without a state block - almost always because a long scene ran
@@ -100,7 +118,7 @@ into the model's token ceiling mid-sentence - Narrate does not shrug and show an
   from exactly where it stopped, never rewriting what the player has already read. The first
   reply's state block stays authoritative so nothing is applied twice.
 
-### 6. A world that moves on its own
+### 7. A world that moves on its own
 
 `WorldSimulator` runs before each turn: NPCs advance along their routines, active threads press
 for their next beat, people who like or hate you act on the time that has passed, and unresolved
@@ -154,7 +172,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 69 tests covering parsing, continuity, cost and persistence
+./gradlew testDebugUnitTest         # 97 tests covering parsing, continuity, canon, cost and persistence
 ```
 
 Without a keystore the release APK is signed with the debug key so it still installs.
@@ -190,7 +208,8 @@ com.narrate.app
 ├── data/
 │   ├── entity/   14 Room entities: worlds, characters, locations, links, items, factions,
 │   │             relationships, memories, turns, threads, chapters, images,
-│   │             visual identities, continuity issues, usage events.
+│   │             visual identities, continuity issues, usage events. Worlds and the
+│   │             player character also store the player's verbatim authored text.
 │   ├── dao/      Queries and flows.
 │   ├── repo/     WorldRepository (the only door to persistence) and WorldSnapshot
 │   │             (one consistent read of everything a turn needs).
@@ -205,6 +224,7 @@ com.narrate.app
 │   ├── ContinuityGuard  Catches and repairs drift; feeds corrections forward.
 │   ├── WorldSimulator   Advances the world offscreen, as hard as the pacing allows.
 │   ├── PlayStyle        Sandbox to dramatic: how much pressure the world applies.
+│   ├── AuthoredCanon    The player's own words, and the code that keeps them intact.
 │   ├── UsageRecorder    Records tokens and estimated cost for every call.
 │   ├── TurnDirector     Runs a turn, completes an incomplete one, compacts history.
 │   ├── ImageDirector    Builds image prompts from live state, manages reference images.
@@ -216,7 +236,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 69 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 97 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
@@ -229,4 +249,10 @@ shape are recovered while a bulleted list inside a scene is left alone; a sandbo
 carries its pacing and a dramatic one does not; usage is recorded per call with the right estimated
 cost and deleted with its world; model listings drop embeddings and speech models and rank this
 year's flagships above a decade of legacy names; prices resolve for dated releases and unknown
-models stay unpriced; and the version 1 to 2 migration keeps an existing save intact.
+models stay unpriced; and each schema migration keeps an existing save intact.
+
+Two of them exist because of bugs found in the field. One opens Settings after a restart with a
+key already stored, capturing anything a background coroutine throws, because that is what used
+to terminate the app and a JVM test would otherwise report a false pass. The other runs creation
+against a deliberately disobedient model that renames the character, renames the world and casts
+the player as one of the locals, and asserts the save comes out with the player's own names.

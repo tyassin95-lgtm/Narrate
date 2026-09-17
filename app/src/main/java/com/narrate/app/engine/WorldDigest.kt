@@ -26,7 +26,16 @@ object WorldDigest {
         if (world.rules.isNotBlank()) appendLine("Laws of this world (absolute): ${world.rules}")
         if (world.themes.isNotBlank()) appendLine("Themes: ${world.themes}")
         if (world.contentGuidelines.isNotBlank()) appendLine("Content guidance: ${world.contentGuidelines}")
-        if (world.customPrompt.isNotBlank()) {
+        if (world.authoredCanon.isNotBlank()) {
+            appendLine()
+            appendLine("## WRITTEN BY THE PLAYER - VERBATIM, AND ABSOLUTE")
+            appendLine("This is the player's own text. It outranks every other line in this file, every")
+            appendLine("summary derived from it, and anything you believe you remember. Never rename,")
+            appendLine("revise, contradict or quietly improve any part of it.")
+            appendLine("<<<")
+            appendLine(world.authoredCanon)
+            appendLine(">>>")
+        } else if (world.customPrompt.isNotBlank()) {
             appendLine()
             appendLine("## THE PLAYER'S OWN DIRECTION (highest authority after these instructions)")
             appendLine(world.customPrompt)
@@ -38,6 +47,16 @@ object WorldDigest {
         return buildString {
             appendLine("# PLAYER CHARACTER (the protagonist - written by the player, never rewrite them)")
             appendLine("Name: ${player.name}")
+            if (player.authoredCanon.isNotBlank()) {
+                appendLine()
+                appendLine("## THIS CHARACTER IN THE PLAYER'S OWN WORDS - VERBATIM, AND ABSOLUTE")
+                appendLine("Their name, their face, their history and their manner are exactly as written")
+                appendLine("here. Where the fields below and this text differ, this text is correct.")
+                appendLine("<<<")
+                appendLine(player.authoredCanon)
+                appendLine(">>>")
+                appendLine()
+            }
             if (player.role.isNotBlank()) appendLine("Role: ${player.role}")
             if (player.summary.isNotBlank()) appendLine("Summary: ${player.summary}")
             if (player.personality.isNotBlank()) appendLine("Personality: ${player.personality}")

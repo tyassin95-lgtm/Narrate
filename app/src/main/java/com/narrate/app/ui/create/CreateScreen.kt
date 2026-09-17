@@ -128,14 +128,15 @@ private fun WorldDirectionStep(state: CreateUiState, viewModel: CreateViewModel)
         maxLines = 20
     )
     Spacer(Modifier.height(16.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        PrimaryButton(
-            text = if (state.worldConcepts.isEmpty()) "Suggest worlds" else "Suggest again",
-            loading = state.generating,
-            modifier = Modifier.weight(1f)
-        ) { viewModel.generateWorldConcepts() }
-        SecondaryButton("Write it myself", Modifier.weight(1f)) { viewModel.authorWorldManually() }
-    }
+    AuthoredActions(
+        hasText = state.worldPrompt.isNotBlank(),
+        generating = state.generating,
+        subject = "world",
+        hasSuggestions = state.worldConcepts.isNotEmpty(),
+        onUseMine = { viewModel.useWhatIWroteForWorld() },
+        onSuggest = { viewModel.generateWorldConcepts() },
+        onSkip = { viewModel.authorWorldManually() }
+    )
     Spacer(Modifier.height(20.dp))
     state.worldConcepts.forEach { concept ->
         ConceptCard(
@@ -247,14 +248,15 @@ private fun CharacterDirectionStep(state: CreateUiState, viewModel: CreateViewMo
         maxLines = 20
     )
     Spacer(Modifier.height(16.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        PrimaryButton(
-            text = if (state.characterConcepts.isEmpty()) "Suggest characters" else "Suggest again",
-            loading = state.generating,
-            modifier = Modifier.weight(1f)
-        ) { viewModel.generateCharacterConcepts() }
-        SecondaryButton("Write it myself", Modifier.weight(1f)) { viewModel.authorCharacterManually() }
-    }
+    AuthoredActions(
+        hasText = state.characterPrompt.isNotBlank(),
+        generating = state.generating,
+        subject = "character",
+        hasSuggestions = state.characterConcepts.isNotEmpty(),
+        onUseMine = { viewModel.useWhatIWroteForCharacter() },
+        onSuggest = { viewModel.generateCharacterConcepts() },
+        onSkip = { viewModel.authorCharacterManually() }
+    )
     Spacer(Modifier.height(20.dp))
     state.characterConcepts.forEach { concept ->
         ConceptCard(
@@ -393,6 +395,66 @@ private fun PlayStylePicker(selected: PlayStyle, onSelect: (PlayStyle) -> Unit) 
                 if (isSelected) {
                     Text("CHOSEN", style = MaterialTheme.typography.labelSmall, color = NarrateColors.Accent)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * What the player can do with what they have written.
+ *
+ * When they have written something, expanding their own text is the primary action and
+ * alternatives are demoted, because a suggestion should never quietly replace their words.
+ */
+@Composable
+private fun AuthoredActions(
+    hasText: Boolean,
+    generating: Boolean,
+    subject: String,
+    hasSuggestions: Boolean,
+    onUseMine: () -> Unit,
+    onSuggest: () -> Unit,
+    onSkip: () -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+        if (hasText) {
+            PrimaryButton(
+                text = "Use what I wrote",
+                modifier = Modifier.fillMaxWidth(),
+                loading = generating
+            ) { onUseMine() }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Your words are kept exactly as written. Names and details you gave are never " +
+                    "changed - anything you left out is filled in around them.",
+                style = MaterialTheme.typography.bodySmall,
+                color = NarrateColors.TextMuted
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SecondaryButton(
+                    if (hasSuggestions) "Show other ideas" else "Suggest alternatives",
+                    Modifier.weight(1f)
+                ) { onSuggest() }
+                SecondaryButton("Skip ahead", Modifier.weight(1f)) { onSkip() }
+            }
+            if (hasSuggestions) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "These are other ideas, not edits to yours. Picking one replaces your $subject; " +
+                        "ignoring them changes nothing.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NarrateColors.Gold
+                )
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PrimaryButton(
+                    text = if (hasSuggestions) "Suggest again" else "Suggest ${subject}s",
+                    loading = generating,
+                    modifier = Modifier.weight(1f)
+                ) { onSuggest() }
+                SecondaryButton("Write it myself", Modifier.weight(1f)) { onSkip() }
             }
         }
     }
