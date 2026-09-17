@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.narrate.app.data.dao.*
 import com.narrate.app.data.entity.*
 
@@ -22,9 +24,10 @@ import com.narrate.app.data.entity.*
         ChapterEntity::class,
         ImageEntity::class,
         VisualIdentityEntity::class,
-        ContinuityIssueEntity::class
+        ContinuityIssueEntity::class,
+        UsageEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class NarrateDatabase : RoomDatabase() {
@@ -42,9 +45,42 @@ abstract class NarrateDatabase : RoomDatabase() {
     abstract fun imageDao(): ImageDao
     abstract fun visualIdentityDao(): VisualIdentityDao
     abstract fun continuityIssueDao(): ContinuityIssueDao
+    abstract fun usageDao(): UsageDao
 
     companion object {
         @Volatile private var instance: NarrateDatabase? = null
+
+        /**
+         * Adds usage tracking and the world's play style. Existing saves keep every row:
+         * a world that predates this migration simply starts out BALANCED.
+         */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE worlds ADD COLUMN playStyle TEXT NOT NULL DEFAULT 'BALANCED'"
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS usage_events (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        worldId TEXT NOT NULL,
+                        turnIndex INTEGER NOT NULL,
+                        purpose TEXT NOT NULL,
+                        provider TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        inputTokens INTEGER NOT NULL,
+                        outputTokens INTEGER NOT NULL,
+                        images INTEGER NOT NULL,
+                        estimatedCost REAL NOT NULL,
+                        costKnown INTEGER NOT NULL,
+                        createdAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_usage_events_worldId ON usage_events (worldId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_usage_events_createdAt ON usage_events (createdAt)")
+            }
+        }
 
         fun get(context: Context): NarrateDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
@@ -53,6 +89,7 @@ abstract class NarrateDatabase : RoomDatabase() {
                 "narrate.db"
             )
                 // A save is the player's world. Never destroy one on a routine upgrade.
+                .addMigrations(MIGRATION_1_2)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
                 .also { instance = it }

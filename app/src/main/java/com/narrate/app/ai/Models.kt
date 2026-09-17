@@ -44,7 +44,11 @@ data class LlmResponse(
     val model: String,
     val provider: ProviderId,
     val inputTokens: Int = 0,
-    val outputTokens: Int = 0
+    val outputTokens: Int = 0,
+    /** The provider's own word for why generation stopped, as it spells it. */
+    val finishReason: String = "",
+    /** True when the reply was cut off at the token ceiling rather than finished. */
+    val truncated: Boolean = false
 )
 
 /** A reference image handed to an image model so a subject keeps the same face across turns. */
@@ -90,7 +94,10 @@ interface AiProvider {
     suspend fun generateImage(request: ImageRequest, apiKey: String): ImageResult =
         throw ProviderException(id, "This provider does not support image generation.")
 
-    /** Live model list from the vendor. Falls back to the curated catalog when it fails. */
+    /**
+     * What this key can actually reach, asked of the provider itself. The curated [catalog]
+     * is only a fallback for when there is no key yet or the listing call fails.
+     */
     suspend fun listModels(apiKey: String): List<ModelInfo>
 
     fun catalog(): List<ModelInfo>

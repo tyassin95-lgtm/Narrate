@@ -31,6 +31,7 @@ class WorldRepository(context: Context) {
     val imageDao = db.imageDao()
     val visualDao = db.visualIdentityDao()
     val issueDao = db.continuityIssueDao()
+    val usageDao = db.usageDao()
 
     fun observeWorlds(): Flow<List<WorldEntity>> = worldDao.observeAll()
     fun observeWorld(id: String): Flow<WorldEntity?> = worldDao.observe(id)
@@ -52,6 +53,8 @@ class WorldRepository(context: Context) {
     fun observeImage(id: String): Flow<ImageEntity?> = imageDao.observe(id)
     fun observePlayer(worldId: String): Flow<CharacterEntity?> = characterDao.observePlayer(worldId)
     fun observeVisualForSubject(subjectId: String): Flow<VisualIdentityEntity?> = visualDao.observeForSubject(subjectId)
+    fun observeUsage(worldId: String): Flow<List<UsageEntity>> = usageDao.observeForWorld(worldId)
+    fun observeAllUsage(): Flow<List<UsageEntity>> = usageDao.observeAll()
 
     suspend fun world(id: String): WorldEntity? = worldDao.get(id)
     suspend fun mostRecentWorld(): WorldEntity? = worldDao.mostRecent()
@@ -97,6 +100,7 @@ class WorldRepository(context: Context) {
         imageDao.deleteByWorld(worldId)
         visualDao.deleteByWorld(worldId)
         issueDao.deleteByWorld(worldId)
+        usageDao.deleteByWorld(worldId)
         worldDao.delete(worldId)
         worldImageDir(worldId).deleteRecursively()
     }
@@ -122,6 +126,8 @@ class WorldRepository(context: Context) {
         visualDao.upsert(identity.copy(updatedAt = System.currentTimeMillis()))
 
     suspend fun saveIssues(issues: List<ContinuityIssueEntity>) = issueDao.insertAll(issues)
+    suspend fun recordUsage(usage: UsageEntity) = usageDao.insert(usage)
+    suspend fun usageForWorld(worldId: String): List<UsageEntity> = usageDao.forWorld(worldId)
     suspend fun visualForSubject(subjectId: String): VisualIdentityEntity? = visualDao.forSubject(subjectId)
     suspend fun image(id: String): ImageEntity? = imageDao.get(id)
     suspend fun character(id: String): CharacterEntity? = characterDao.get(id)

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -99,13 +100,14 @@ fun PlayScreen(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp)
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(36.dp)
             ) {
-                items(state.turns, key = { it.id }) { turn ->
+                itemsIndexed(state.turns, key = { _, turn -> turn.id }) { index, turn ->
                     TurnBlock(
                         turn = turn,
                         images = state.images.filter { it.turnIndex == turn.index },
+                        showSeparator = index > 0,
                         onOpenImage = onOpenImage
                     )
                 }
@@ -216,13 +218,24 @@ private fun PlayTopBar(
 }
 
 @Composable
-private fun TurnBlock(turn: TurnEntity, images: List<ImageEntity>, onOpenImage: (String) -> Unit) {
+private fun TurnBlock(
+    turn: TurnEntity,
+    images: List<ImageEntity>,
+    showSeparator: Boolean,
+    onOpenImage: (String) -> Unit
+) {
     Column(Modifier.fillMaxWidth()) {
+        if (showSeparator && turn.playerInput.isBlank()) {
+            HorizontalDivider(
+                Modifier.padding(bottom = 24.dp),
+                color = NarrateColors.Divider.copy(alpha = 0.5f)
+            )
+        }
         if (turn.playerInput.isNotBlank()) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 14.dp)
+                    .padding(bottom = 22.dp)
                     .background(NarrateColors.Surface, RoundedCornerShape(6.dp))
                     .border(1.dp, NarrateColors.Divider, RoundedCornerShape(6.dp))
                     .padding(12.dp)

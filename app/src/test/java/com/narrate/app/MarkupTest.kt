@@ -51,4 +51,40 @@ class MarkupTest {
         val plain = MarkupParser.stripMarkup("**Elena** turns. [[thought]]She knew.[[/thought]] *Finally.*")
         assertEquals("Elena turns. She knew. Finally.", plain)
     }
+
+    @Test
+    fun `hard-wrapped prose is rejoined into one paragraph`() {
+        val wrapped = """
+            The tide is further out than it should be at this hour, and the mud smells of iron and
+            old rope. Elena is already on the steps with her coat buttoned to the throat, watching
+            the water come back in.
+
+            She does not look up when you arrive.
+        """.trimIndent()
+        val prose = MarkupParser.parse(wrapped).filterIsInstance<Block.Prose>()
+        assertEquals(2, prose.size)
+        assertTrue(prose[0].text.contains("old rope. Elena is already"))
+        assertTrue(prose[0].text.lines().size == 1)
+        assertEquals("She does not look up when you arrive.", prose[1].text)
+    }
+
+    @Test
+    fun `paragraphs separated by a single newline stay separate`() {
+        val markup = """
+            He set the cup down.
+            Outside, the rain kept on.
+        """.trimIndent()
+        val prose = MarkupParser.parse(markup).filterIsInstance<Block.Prose>()
+        assertEquals(2, prose.size)
+    }
+
+    @Test
+    fun `dialogue lines are never glued together`() {
+        val markup = """
+            "You are late," she said.
+            "I know."
+        """.trimIndent()
+        val prose = MarkupParser.parse(markup).filterIsInstance<Block.Prose>()
+        assertEquals(2, prose.size)
+    }
 }

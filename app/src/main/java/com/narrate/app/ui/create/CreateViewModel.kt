@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.narrate.app.container
 import com.narrate.app.engine.CharacterConcept
+import com.narrate.app.engine.PlayStyle
 import com.narrate.app.engine.WorldConcept
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,6 +17,7 @@ enum class CreateStep { WORLD_DIRECTION, WORLD_DETAILS, CHARACTER_DIRECTION, CHA
 data class CreateUiState(
     val step: CreateStep = CreateStep.WORLD_DIRECTION,
     val worldPrompt: String = "",
+    val playStyle: PlayStyle = PlayStyle.BALANCED,
     val worldConcepts: List<WorldConcept> = emptyList(),
     val world: WorldConcept = WorldConcept(),
     val narrationLength: String = "LONG",
@@ -40,6 +42,7 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
     val state: StateFlow<CreateUiState> = _state.asStateFlow()
 
     fun setWorldPrompt(value: String) = update { it.copy(worldPrompt = value) }
+    fun setPlayStyle(value: PlayStyle) = update { it.copy(playStyle = value) }
     fun setCharacterPrompt(value: String) = update { it.copy(characterPrompt = value) }
     fun setNarrationLength(value: String) = update { it.copy(narrationLength = value) }
     fun setContentGuidelines(value: String) = update { it.copy(contentGuidelines = value) }
@@ -63,7 +66,10 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
     fun generateWorldConcepts() {
         viewModelScope.launch {
             update { it.copy(generating = true, error = null) }
-            val result = container.worldForge.worldConcepts(_state.value.worldPrompt)
+            val result = container.worldForge.worldConcepts(
+                direction = _state.value.worldPrompt,
+                playStyle = _state.value.playStyle
+            )
             update { current ->
                 result.fold(
                     onSuccess = { current.copy(generating = false, worldConcepts = it) },
@@ -129,8 +135,20 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
     fun build() {
         viewModelScope.launch {
             val current = _state.value
-            update { it.copy(step = CreateStep.BUILDING, generating = true, error = null, buildingStage = "Drawing the map...") }
-            val build = container.worldForge.buildWorld(current.world, current.worldPrompt, current.character)
+            update {
+                it.copy(
+                    step = CreateStep.BUILDING,
+                    generating = true,
+                    error = null,
+                    buildingStage = "Drawing the map..."
+                )
+            }
+            val build = container.worldForge.buildWorld(
+                concept = current.world,
+                customPrompt = current.worldPrompt,
+                character = current.character,
+                playStyle = current.playStyle
+            )
             if (build.isFailure) {
                 update {
                     it.copy(
@@ -150,7 +168,8 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
                     contentGuidelines = current.contentGuidelines,
                     character = current.character,
                     characterPrompt = current.characterPrompt,
-                    build = build.getOrNull()
+                    build = build.getOrNull(),
+                    playStyle = current.playStyle
                 )
             }
             update { state ->

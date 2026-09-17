@@ -105,4 +105,135 @@ class TurnParserTest {
         assertEquals("The harbour bell rings twice.", parsed.narration.trim())
         assertTrue(parsed.parseNotes.isNotEmpty())
     }
+
+    @Test
+    fun `choices survive a model that writes its own headers`() {
+        val raw = """
+            The door closes behind her.
+
+            **Choices:**
+            1. Follow her out
+            2. Read the letter she left
+            3. Stay where you are
+
+            ===STATE===
+            {"story_time": "Day 2, night"}
+        """.trimIndent()
+        val parsed = TurnParser.parse(raw)
+        assertEquals(3, parsed.choices.size)
+        assertEquals("Follow her out", parsed.choices[0].label)
+        assertTrue(parsed.stateParsed)
+        assertTrue("the header must not remain in the prose", !parsed.narration.contains("Choices:"))
+    }
+
+    @Test
+    fun `an OPTIONS header is understood too`() {
+        val parsed = TurnParser.parse(
+            """
+            ===NARRATION===
+            The engine coughs and dies.
+            OPTIONS
+            - Get out and look
+            - Try the ignition again
+            """.trimIndent()
+        )
+        assertEquals(2, parsed.choices.size)
+    }
+
+    @Test
+    fun `a trailing list with no header at all is still offered to the player`() {
+        val parsed = TurnParser.parse(
+            """
+            ===NARRATION===
+            Rain hammers the tin roof. Marcus is late, and the tea has gone cold.
+
+            What do you do?
+            - Wait another ten minutes
+            - Call him
+            - Leave
+            """.trimIndent()
+        )
+        assertEquals(3, parsed.choices.size)
+        assertEquals("Call him", parsed.choices[1].label)
+        assertTrue(!parsed.narration.contains("What do you do?"))
+        assertTrue(parsed.narration.contains("Rain hammers the tin roof"))
+    }
+
+    @Test
+    fun `a bulleted list inside the scene is not mistaken for choices`() {
+        val parsed = TurnParser.parse(
+            """
+            ===NARRATION===
+            The inventory sheet is pinned to the wall.
+
+            - Two crates of salt
+            - A coil of rope
+            - Someone's initials, scratched into the wood
+
+            You put it back exactly as you found it, and the room is quiet again.
+            ===CHOICES===
+            - Leave the room
+            """.trimIndent()
+        )
+        assertEquals(1, parsed.choices.size)
+        assertEquals("Leave the room", parsed.choices[0].label)
+        assertTrue("the list belongs to the scene", parsed.narration.contains("A coil of rope"))
+    }
+
+    @Test
+    fun `choices placed in the state block are recovered`() {
+        val parsed = TurnParser.parse(
+            """
+            ===NARRATION===
+            She waits.
+            ===STATE===
+            {"story_time": "Day 1, noon", "choices": ["Answer her", "Turn away"]}
+            """.trimIndent()
+        )
+        assertEquals(2, parsed.choices.size)
+        assertEquals("Answer her", parsed.choices[0].label)
+        assertTrue(parsed.stateParsed)
+    }
+
+    @Test
+    fun `a reply cut off mid-sentence is recognised as unfinished`() {
+        val cut = TurnParser.parse(
+            """
+            ===NARRATION===
+            The tide is further out than it should be at this hour, and Elena is already on the steps
+            with her coat buttoned to the throat, and when she sees you she does not
+            """.trimIndent()
+        )
+        assertTrue(cut.looksUnfinished)
+        assertTrue(!cut.isComplete)
+
+        val finished = TurnParser.parse(
+            """
+            ===NARRATION===
+            The tide is further out than it should be at this hour. Elena waits on the steps.
+            ===CHOICES===
+            - Go to her
+            ===STATE===
+            {"story_time": "Day 1, dusk"}
+            """.trimIndent()
+        )
+        assertTrue(!finished.looksUnfinished)
+        assertTrue(finished.isComplete)
+    }
+
+    @Test
+    fun `duplicate and over-long choice lines are cleaned up`() {
+        val parsed = TurnParser.parse(
+            """
+            ===CHOICES===
+            - Ask her what she meant
+            - Ask her what she meant
+            > **Leave without a word**
+            - 
+            - Wait
+            """.trimIndent()
+        )
+        assertEquals(3, parsed.choices.size)
+        assertEquals("Leave without a word", parsed.choices[1].label)
+    }
 }

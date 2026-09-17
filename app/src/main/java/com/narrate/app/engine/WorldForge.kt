@@ -67,12 +67,20 @@ class WorldForge(
     private val settings: SettingsStore
 ) {
 
-    private suspend fun ask(system: String, user: String, maxTokens: Int = 4000, temperature: Double = 1.0): String {
+    private val usage = UsageRecorder(repo)
+
+    private suspend fun ask(
+        system: String,
+        user: String,
+        maxTokens: Int = 4000,
+        temperature: Double = 1.0,
+        worldId: String = ""
+    ): String {
         val choice = settings.current.narration
         if (!choice.isSet) {
             throw ProviderException(choice.provider, "No narration model selected. Choose one in Settings.")
         }
-        return ProviderRegistry.get(choice.provider).chat(
+        val response = ProviderRegistry.get(choice.provider).chat(
             LlmRequest(
                 model = choice.model,
                 system = system,
@@ -81,11 +89,17 @@ class WorldForge(
                 temperature = temperature
             ),
             settings.apiKey(choice.provider)
-        ).text
+        )
+        usage.recordChat(worldId, -1, UsageRecorder.PURPOSE_CREATION, response, system.length + user.length)
+        return response.text
     }
 
     /** Several distinct starting points for a world, shaped by whatever the player typed. */
-    suspend fun worldConcepts(direction: String, count: Int = 3): Result<List<WorldConcept>> = runCatching {
+    suspend fun worldConcepts(
+        direction: String,
+        count: Int = 3,
+        playStyle: PlayStyle = PlayStyle.BALANCED
+    ): Result<List<WorldConcept>> = runCatching {
         val brief = direction.ifBlank { "Surprise the player. Pick something with a strong, specific point of view." }
         val raw = ask(
             system = "You invent settings for a persistent interactive world. You are specific and concrete. " +
@@ -98,6 +112,11 @@ class WorldForge(
 
                 Each must be distinct in setting, tone and premise - not three flavours of one idea.
                 Honour the player's direction exactly; it outranks your own taste.
+
+                The player wants this kind of experience: ${playStyle.label} - ${playStyle.blurb}
+                ${playStyle.buildGuidance}
+                The premise and opening situation must suit that, so a sandbox world opens on an
+                ordinary day rather than on a crisis.
 
                 Reply with a JSON array of exactly $count objects:
                 [{
@@ -167,7 +186,12 @@ class WorldForge(
      * Builds the world the player will actually inhabit: geography, a cast with positions and
      * routines, factions, and the threads already in motion before turn one.
      */
-    suspend fun buildWorld(concept: WorldConcept, customPrompt: String, character: CharacterConcept): Result<WorldBuildOutcome> =
+    suspend fun buildWorld(
+        concept: WorldConcept,
+        customPrompt: String,
+        character: CharacterConcept,
+        playStyle: PlayStyle = PlayStyle.BALANCED
+    ): Result<WorldBuildOutcome> =
         runCatching {
             val raw = ask(
                 system = "You are the architect of a persistent simulated world. Everything you produce becomes " +
@@ -203,11 +227,13 @@ class WorldForge(
                     - 2-4 factions or groups with real interests in conflict.
                     - 3-5 threads already in motion before the player's first turn, each with a next beat
                       that will happen whether or not the player engages.
+                      ${playStyle.buildGuidance}
                     - 5-10 established facts that must never be contradicted.
 
                     Reply with one JSON object:
                     {
                       "starting_location": "exact name of a location you defined, where the first scene opens",
+                      the opening must match the requested pacing above,
                       "starting_time": "Day 1, morning",
                       "locations": [{"name":"","type":"REGION|SETTLEMENT|DISTRICT|BUILDING|ROOM|LANDMARK|WILDERNESS",
                         "parent":"containing location name or empty","description":"","atmosphere":"",
@@ -250,7 +276,8 @@ class WorldForge(
         contentGuidelines: String,
         character: CharacterConcept,
         characterPrompt: String,
-        build: WorldBuildOutcome?
+        build: WorldBuildOutcome?,
+        playStyle: PlayStyle = PlayStyle.BALANCED
     ): WorldEntity {
         val worldId = newId()
         val world = WorldEntity(
@@ -265,6 +292,7 @@ class WorldForge(
             themes = concept.themes,
             customPrompt = listOf(customPrompt, characterPrompt).filter { it.isNotBlank() }.joinToString("\n\n"),
             narrationLength = narrationLength,
+            playStyle = playStyle.id,
             contentGuidelines = contentGuidelines,
             artStyle = concept.artStyle.ifBlank { "Cinematic, film still, natural lighting, high detail" },
             storyTime = build?.startingTime?.ifBlank { "Day 1, morning" } ?: "Day 1, morning",
@@ -430,6 +458,16 @@ class WorldForge(
                 id = newId(), worldId = worldId, kind = "RULE",
                 text = "The player defined this world: $customPrompt",
                 importance = 5, keywords = MemoryIndex.keywords(customPrompt).joinToString(" "),
+                storyTime = world.storyTime, turnIndex = 0, pinned = true
+            )
+        }
+        if (playStyle.quietWorld) {
+            facts += MemoryEntity(
+                id = newId(), worldId = worldId, kind = "RULE",
+                text = "The player chose a ${playStyle.label.lowercase()} world: " +
+                    "events emerge from their actions and the ordinary life of the place, " +
+                    "and the world does not manufacture drama to hold their attention.",
+                importance = 5, keywords = "pacing tone sandbox quiet",
                 storyTime = world.storyTime, turnIndex = 0, pinned = true
             )
         }

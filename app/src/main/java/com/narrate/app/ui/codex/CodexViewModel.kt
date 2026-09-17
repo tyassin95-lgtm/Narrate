@@ -28,6 +28,7 @@ data class CodexUiState(
     val images: List<ImageEntity> = emptyList(),
     val issues: List<ContinuityIssueEntity> = emptyList(),
     val turns: List<TurnEntity> = emptyList(),
+    val usage: List<UsageEntity> = emptyList(),
     val generating: Boolean = false,
     val message: String? = null
 ) {
@@ -62,8 +63,9 @@ class CodexViewModel(application: Application, private val worldId: String) : An
             repo.observeChapters(worldId),
             repo.observeImages(worldId),
             repo.observeIssues(worldId),
-            repo.observeTurns(worldId)
-        ) { chapters, images, issues, turns -> listOf(chapters, images, issues, turns) },
+            repo.observeTurns(worldId),
+            repo.observeUsage(worldId)
+        ) { chapters, images, issues, turns, usage -> listOf(chapters, images, issues, turns, usage) },
         transient
     ) { first, second, third, flags ->
         @Suppress("UNCHECKED_CAST")
@@ -80,6 +82,7 @@ class CodexViewModel(application: Application, private val worldId: String) : An
             images = third[1] as List<ImageEntity>,
             issues = third[2] as List<ContinuityIssueEntity>,
             turns = third[3] as List<TurnEntity>,
+            usage = third[4] as List<UsageEntity>,
             generating = flags.first,
             message = flags.second
         )
@@ -92,6 +95,15 @@ class CodexViewModel(application: Application, private val worldId: String) : An
 
     fun memoriesFor(character: CharacterEntity, memories: List<MemoryEntity>): List<MemoryEntity> =
         MemoryIndex.forSubject(memories, character.id, character.name)
+
+    /** Pacing is part of the world's configuration, and can be changed as it goes on. */
+    fun setPlayStyle(style: com.narrate.app.engine.PlayStyle) {
+        viewModelScope.launch {
+            val world = repo.world(worldId) ?: return@launch
+            repo.saveWorld(world.copy(playStyle = style.id))
+            transient.value = transient.value.first to "Pacing set to ${style.label.lowercase()}."
+        }
+    }
 
     fun togglePin(memory: MemoryEntity) {
         viewModelScope.launch { repo.setMemoryPinned(memory.id, !memory.pinned) }

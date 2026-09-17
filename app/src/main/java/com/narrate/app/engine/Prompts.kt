@@ -83,6 +83,8 @@ object Prompts {
         - Not everything revolves around the player. Some developments simply happen.
         - Withhold what the player could not perceive. Offscreen developments should surface through
           evidence, rumour, consequence and arrival, not narrator omniscience.
+        - A living world is not the same as an eventful one. Life continuing quietly is itself the
+          simulation working. Follow the pacing instructions below on how much should happen.
     """.trimIndent()
 
     private fun narrationCraft(world: WorldEntity): String {
@@ -180,7 +182,7 @@ object Prompts {
         new face, every place the player learns of, and every consequence that will still matter later.
     """.trimIndent()
 
-    private fun outputFormat(): String = """
+    private fun outputFormat(style: PlayStyle): String = """
         OUTPUT FORMAT (exactly this shape, every single turn)
 
         ${TurnProtocol.NARRATION}
@@ -196,14 +198,23 @@ object Prompts {
         { ...the JSON state block... }
         ${TurnProtocol.END}
 
-        About the choices: offer three to five. Each must be genuinely possible in this exact moment,
-        and they should differ in kind - act, speak, observe, withdraw, improvise - not merely in wording.
+        The CHOICES section is never optional. Every completed turn ends with three to five of them,
+        even on the quietest turn, even when nothing is at stake, even when the scene is calm. A turn
+        without choices is an unfinished turn.
+
+        ${style.choiceGuidance}
+
+        Each must be genuinely possible in this exact moment and phrased as a single short line.
         They are suggestions on a menu the player is free to ignore; the player may type anything at all,
         and when they do, you honour it rather than steering them back to your list.
+
+        Budget your length so that all four sections fit in one reply. If you are running long, shorten
+        the narration rather than dropping the choices or the state block.
     """.trimIndent()
 
     /** The narrator/GM system prompt. Mostly static so providers can cache it. */
     fun gameMaster(world: WorldEntity): String = buildString {
+        val style = PlayStyle.from(world.playStyle)
         appendLine(
             """
             You are the narrator, game master, world simulator and keeper of history for a persistent
@@ -220,13 +231,15 @@ object Prompts {
         appendLine()
         appendLine(SIMULATION_DUTIES)
         appendLine()
+        appendLine(style.narratorGuidance)
+        appendLine()
         appendLine(narrationCraft(world))
         appendLine()
         appendLine(MARKUP_SPEC)
         appendLine()
         appendLine(STATE_SCHEMA)
         appendLine()
-        appendLine(outputFormat())
+        appendLine(outputFormat(style))
         if (world.contentGuidelines.isNotBlank()) {
             appendLine()
             appendLine("CONTENT DIRECTION FROM THE PLAYER: ${world.contentGuidelines}")
@@ -239,17 +252,67 @@ object Prompts {
     }
 
     /** The opening turn: establish the scene rather than react to an action. */
-    fun openingInstruction(): String = """
-        This is the opening of the world. There is no previous turn.
+    fun openingInstruction(world: WorldEntity): String {
+        val style = PlayStyle.from(world.playStyle)
+        return """
+            This is the opening of the world. There is no previous turn.
 
-        Establish the player exactly where the state file places them, at the story time given. Ground
-        the scene in specific sensory detail, introduce whoever is present, and set something in motion
-        that the player must respond to. Do not summarise the premise back at them - dramatise the first
-        moment of it. Do not skip ahead in time, and do not resolve anything yet.
+            Establish the player exactly where the state file places them, at the story time given.
+            Ground the scene in specific sensory detail and introduce whoever is present. Do not
+            summarise the premise back at them - dramatise the first moment of it. Do not skip ahead in
+            time, and do not resolve anything yet.
 
-        In the state block, record the opening situation as memories and threads so the world remembers
-        how it began.
-    """.trimIndent()
+            ${style.openingGuidance}
+
+            In the state block, record the opening situation as memories and threads so the world
+            remembers how it began.
+        """.trimIndent()
+    }
+
+    /**
+     * Sent when a reply arrived without everything a turn needs - usually because it ran into the
+     * token ceiling mid-sentence. Asks only for what is missing so the turn can be completed
+     * rather than rewritten, which would cost a whole second narration and risk contradicting
+     * the prose the player is already reading.
+     */
+    fun repairInstruction(
+        wasCutOff: Boolean,
+        needsChoices: Boolean,
+        needsState: Boolean
+    ): String = buildString {
+        if (wasCutOff) {
+            appendLine("Your last reply was cut off before it was finished.")
+            appendLine()
+            appendLine(
+                "Continue it. Begin exactly where the text stopped, mid-sentence if that is where it " +
+                    "ended, and write only enough to bring the scene to a natural resting point - a few " +
+                    "sentences, not a new scene. Do not repeat or rewrite anything you already wrote, " +
+                    "and do not start again from the beginning."
+            )
+            appendLine()
+            appendLine("Put that continuation under ${TurnProtocol.NARRATION}. If the prose was already")
+            appendLine("complete, omit that section entirely.")
+        } else {
+            appendLine("Your last reply was missing part of the required format.")
+            appendLine()
+            appendLine(
+                "Do not rewrite or resend the narration - the player has already read it. Supply only " +
+                    "the missing sections, consistent with what you just wrote."
+            )
+            appendLine("Omit the ${TurnProtocol.NARRATION} section entirely.")
+        }
+        appendLine()
+        if (needsChoices) {
+            appendLine("Under ${TurnProtocol.CHOICES}, give three to five things the player could do next,")
+            appendLine("one per line, each possible in the situation your narration just left them in.")
+        }
+        if (needsState) {
+            appendLine("Under ${TurnProtocol.STATE}, give the JSON state block for everything that happened")
+            appendLine("in that turn, following the schema exactly.")
+        }
+        appendLine()
+        appendLine("End with ${TurnProtocol.END}.")
+    }
 
     fun playerInputInstruction(input: String, kind: String): String = when (kind) {
         "SPEECH" -> """

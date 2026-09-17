@@ -50,12 +50,15 @@ class AnthropicProvider(private val baseUrl: String = "https://api.anthropic.com
             .joinToString("\n")
             .ifBlank { throw ProviderException(id, "No content returned.") }
         val usage = root["usage"]?.jsonObject
+        val stopReason = root["stop_reason"]?.jsonPrimitive?.contentOrNull.orEmpty()
         return LlmResponse(
             text = text,
             model = root["model"]?.jsonPrimitive?.contentOrNull ?: request.model,
             provider = id,
             inputTokens = usage?.get("input_tokens")?.jsonPrimitive?.intOrNull ?: 0,
-            outputTokens = usage?.get("output_tokens")?.jsonPrimitive?.intOrNull ?: 0
+            outputTokens = usage?.get("output_tokens")?.jsonPrimitive?.intOrNull ?: 0,
+            finishReason = stopReason,
+            truncated = stopReason == "max_tokens"
         )
     }
 
@@ -88,24 +91,26 @@ class AnthropicProvider(private val baseUrl: String = "https://api.anthropic.com
                     .get()
                     .build()
             )
-            AppJson.parseToJsonElement(body).jsonObject["data"]?.jsonArray.orEmpty().mapNotNull { element ->
-                val obj = element.jsonObject
-                val modelId = obj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                ModelInfo(
-                    id = modelId,
-                    provider = id,
-                    label = obj["display_name"]?.jsonPrimitive?.contentOrNull ?: modelId
-                )
-            }
+            val listed = AppJson.parseToJsonElement(body).jsonObject["data"]?.jsonArray.orEmpty()
+                .mapNotNull { element ->
+                    val obj = element.jsonObject
+                    val modelId = obj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    ModelTaxonomy.describe(id, modelId, obj["display_name"]?.jsonPrimitive?.contentOrNull)
+                }
+            ModelTaxonomy.sort(listed).ifEmpty { catalog() }
         }.getOrElse { catalog() }
     }
 
-    override fun catalog(): List<ModelInfo> = listOf(
-        ModelInfo("claude-opus-4-5", id, "Claude Opus 4.5", note = "Deep narration"),
-        ModelInfo("claude-sonnet-4-5", id, "Claude Sonnet 4.5", note = "Balanced"),
-        ModelInfo("claude-haiku-4-5", id, "Claude Haiku 4.5", note = "Fast simulation"),
-        ModelInfo("claude-opus-4-1", id, "Claude Opus 4.1"),
-        ModelInfo("claude-3-7-sonnet-latest", id, "Claude 3.7 Sonnet")
+    /** Fallback only, for before a key is entered. The live listing always wins. */
+    override fun catalog(): List<ModelInfo> = ModelTaxonomy.sort(
+        listOfNotNull(
+            ModelTaxonomy.describe(id, "claude-fable-5-1", "Claude Fable 5.1"),
+            ModelTaxonomy.describe(id, "claude-opus-5", "Claude Opus 5"),
+            ModelTaxonomy.describe(id, "claude-sonnet-5", "Claude Sonnet 5"),
+            ModelTaxonomy.describe(id, "claude-opus-4-8", "Claude Opus 4.8"),
+            ModelTaxonomy.describe(id, "claude-sonnet-4-6", "Claude Sonnet 4.6"),
+            ModelTaxonomy.describe(id, "claude-haiku-4-5", "Claude Haiku 4.5")
+        )
     )
 
     private companion object {

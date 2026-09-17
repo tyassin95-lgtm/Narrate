@@ -26,6 +26,11 @@ data class WorldEntity(
     val customPrompt: String = "",
     val narrationStyle: String = "Cinematic third-person limited, present tense",
     val narrationLength: String = "LONG",
+    /**
+     * How much pressure the world applies: SANDBOX, GENTLE, BALANCED or DRAMATIC.
+     * Persistent configuration that shapes the narrator, the simulation and world creation.
+     */
+    val playStyle: String = "BALANCED",
     val contentGuidelines: String = "",
     val artStyle: String = "Cinematic, film still, natural lighting, high detail",
     val storyTime: String = "Day 1, morning",
@@ -314,5 +319,28 @@ data class ContinuityIssueEntity(
     val category: String = "",
     val description: String = "",
     val resolution: String = "",
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+/**
+ * One billable call to a provider. Written for every turn, repair, chapter summary,
+ * creation step and image, so the player can see where their money went.
+ */
+@Entity(tableName = "usage_events", indices = [Index("worldId"), Index("createdAt")])
+data class UsageEntity(
+    @PrimaryKey val id: String = newId(),
+    /** Blank for work done before a world exists, such as generating world concepts. */
+    val worldId: String = "",
+    val turnIndex: Int = -1,
+    /** NARRATION, REPAIR, CHAPTER, CREATION, IMAGE */
+    val purpose: String = "NARRATION",
+    val provider: String = "",
+    val model: String = "",
+    val inputTokens: Int = 0,
+    val outputTokens: Int = 0,
+    val images: Int = 0,
+    val estimatedCost: Double = 0.0,
+    /** False when the model has no price on record, so totals can say so honestly. */
+    val costKnown: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 )

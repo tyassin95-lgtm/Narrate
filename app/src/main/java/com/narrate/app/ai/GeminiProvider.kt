@@ -70,12 +70,15 @@ class GeminiProvider(private val baseUrl: String = "https://generativelanguage.g
             throw ProviderException(id, "No content returned" + (reason?.let { " (finish reason: $it)" } ?: "."))
         }
         val usage = root["usageMetadata"]?.jsonObject
+        val finishReason = candidate?.get("finishReason")?.jsonPrimitive?.contentOrNull.orEmpty()
         return LlmResponse(
             text = text,
             model = request.model,
             provider = id,
             inputTokens = usage?.get("promptTokenCount")?.jsonPrimitive?.intOrNull ?: 0,
-            outputTokens = usage?.get("candidatesTokenCount")?.jsonPrimitive?.intOrNull ?: 0
+            outputTokens = usage?.get("candidatesTokenCount")?.jsonPrimitive?.intOrNull ?: 0,
+            finishReason = finishReason,
+            truncated = finishReason == "MAX_TOKENS"
         )
     }
 
@@ -164,35 +167,35 @@ class GeminiProvider(private val baseUrl: String = "https://generativelanguage.g
                 id,
                 Request.Builder().url("$baseUrl/models?pageSize=200").addHeader("x-goog-api-key", apiKey).get().build()
             )
-            AppJson.parseToJsonElement(body).jsonObject["models"]?.jsonArray.orEmpty().mapNotNull { element ->
-                val obj = element.jsonObject
-                val raw = obj["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                val modelId = raw.removePrefix("models/")
-                val methods = obj["supportedGenerationMethods"]?.jsonArray.orEmpty()
-                    .mapNotNull { it.jsonPrimitive.contentOrNull }
-                val isImage = modelId.contains("image") || modelId.startsWith("imagen")
-                if (!isImage && methods.isNotEmpty() && "generateContent" !in methods) return@mapNotNull null
-                ModelInfo(
-                    id = modelId,
-                    provider = id,
-                    label = obj["displayName"]?.jsonPrimitive?.contentOrNull ?: modelId,
-                    supportsText = !isImage,
-                    supportsImageGeneration = isImage,
-                    supportsImageReferences = isImage && !modelId.startsWith("imagen")
-                )
-            }.sortedBy { it.id }
+            val listed = AppJson.parseToJsonElement(body).jsonObject["models"]?.jsonArray.orEmpty()
+                .mapNotNull { element ->
+                    val obj = element.jsonObject
+                    val raw = obj["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    val modelId = raw.removePrefix("models/")
+                    val methods = obj["supportedGenerationMethods"]?.jsonArray.orEmpty()
+                        .mapNotNull { it.jsonPrimitive.contentOrNull }
+                    // Gemini serves image models through generateContent too, so only drop a
+                    // model when it advertises methods and none of them can generate.
+                    val generative = methods.isEmpty() ||
+                        methods.any { it == "generateContent" || it == "predict" }
+                    if (!generative) return@mapNotNull null
+                    ModelTaxonomy.describe(id, modelId, obj["displayName"]?.jsonPrimitive?.contentOrNull)
+                }
+            ModelTaxonomy.sort(listed).ifEmpty { catalog() }
         }.getOrElse { catalog() }
     }
 
-    override fun catalog(): List<ModelInfo> = listOf(
-        ModelInfo("gemini-2.5-pro", id, "Gemini 2.5 Pro", note = "Flagship narration"),
-        ModelInfo("gemini-2.5-flash", id, "Gemini 2.5 Flash", note = "Fast simulation"),
-        ModelInfo("gemini-2.0-flash", id, "Gemini 2.0 Flash"),
-        ModelInfo(
-            "gemini-2.5-flash-image", id, "Gemini 2.5 Flash Image",
-            supportsText = false, supportsImageGeneration = true, supportsImageReferences = true,
-            note = "Supports reference images"
-        ),
-        ModelInfo("imagen-4.0-generate-001", id, "Imagen 4", supportsText = false, supportsImageGeneration = true)
+    /** Fallback only, for before a key is entered. The live listing always wins. */
+    override fun catalog(): List<ModelInfo> = ModelTaxonomy.sort(
+        listOfNotNull(
+            ModelTaxonomy.describe(id, "gemini-3.8-flash", "Gemini 3.8 Flash"),
+            ModelTaxonomy.describe(id, "gemini-3.5-flash", "Gemini 3.5 Flash"),
+            ModelTaxonomy.describe(id, "gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite"),
+            ModelTaxonomy.describe(id, "gemini-2.5-pro", "Gemini 2.5 Pro"),
+            ModelTaxonomy.describe(id, "gemini-2.5-flash", "Gemini 2.5 Flash"),
+            ModelTaxonomy.describe(id, "gemini-3.1-flash-image", "Gemini 3.1 Flash Image"),
+            ModelTaxonomy.describe(id, "gemini-3-pro-image", "Gemini 3 Pro Image"),
+            ModelTaxonomy.describe(id, "gemini-2.5-flash-image", "Gemini 2.5 Flash Image")
+        )
     )
 }

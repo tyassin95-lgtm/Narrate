@@ -120,9 +120,18 @@ class PlayViewModel(application: Application, private val worldId: String) : And
                 _lastIssues.value = turnResult.issues
                     .filter { it.severity != com.narrate.app.engine.ContinuityGuard.SEVERITY_INFO }
                     .map { "${it.description} ${it.resolution}" }
-                val notice = if (!turnResult.parsed.stateParsed && turnResult.parsed.parseNotes.isNotEmpty()) {
-                    "The narrator did not return a world update this turn, so nothing was recorded. The prose is kept."
-                } else null
+                // The repair pass handles an incomplete reply silently; the player only hears
+                // about it when even that could not produce a usable turn.
+                val notice = when {
+                    turnResult.parsed.choices.isEmpty() && !turnResult.parsed.stateParsed ->
+                        "The narrator's reply came back incomplete and could not be completed. The prose is " +
+                            "kept, but nothing was recorded. Type what you want to do next."
+                    turnResult.parsed.choices.isEmpty() ->
+                        "No suggested actions came back this turn. Type whatever you want to do."
+                    !turnResult.parsed.stateParsed ->
+                        "The narrator returned no world update this turn, so nothing was recorded."
+                    else -> null
+                }
                 _transient.value.copy(loading = false, notice = notice)
             },
             onFailure = { throwable ->

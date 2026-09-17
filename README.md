@@ -15,8 +15,14 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
 - **A world that remembers.** Every fact, event, promise, relationship, injury, object and
   place is written to a save file the moment it happens, and handed back to the model as
   authoritative state on every turn. The model is never asked to remember anything.
-- **Your models, your keys.** OpenAI, Anthropic Claude, Google Gemini and xAI Grok. Pick a
-  different model for narration, for background simulation and for images.
+- **Your models, your keys.** OpenAI, Anthropic Claude, Google Gemini and xAI Grok. Narrate asks
+  each provider what your key can actually reach, sorts the current flagships to the top, and shows
+  what each one costs. Pick a different model for narration, for background simulation and for images.
+- **Costs you can see.** Every call is recorded with its tokens and an estimated price, per world
+  and overall.
+- **A world that treats you how you want.** Choose the pacing when you create a world - from a
+  sandbox you simply live in to something that keeps coming at you - and change it later if you
+  want a different kind of life there.
 - **Your world, your character.** Generated concepts are offered as material at every step and
   can be ignored entirely. Anything you type becomes pinned canon the narrator cannot overrule.
 - **Long-form narration with real formatting.** Text messages, emails, phone calls, letters,
@@ -77,11 +83,62 @@ Anything flagged is written to the world's continuity log **and fed back into th
 as an explicit correction, so drift is caught rather than compounded. You can read the whole log
 in Codex → Continuity.
 
-### 5. A world that moves on its own
+### 5. A turn that arrives incomplete is completed, not patched over
+
+A turn is only finished when the player has something to do and the world was updated. When a
+reply arrives without choices or without a state block - almost always because a long scene ran
+into the model's token ceiling mid-sentence - Narrate does not shrug and show an empty bar:
+
+- Providers' own finish reasons (`length`, `max_tokens`, `MAX_TOKENS`) are read on every reply, and
+  prose that stops mid-sentence is detected even when a provider says nothing.
+- The token ceiling is raised automatically to fit the format, using the player's setting as a
+  floor rather than a cap, so a long narration plus its state block plus its choices all fit.
+- Choices written in a shape the format did not ask for are still found: an `OPTIONS` header, a
+  bolded `**Choices:**`, a bare list at the end of the prose, or a `choices` array inside the state
+  block. A bulleted list *inside* a scene is left where it belongs.
+- If it is still incomplete, one follow-up call asks only for what is missing - continuing prose
+  from exactly where it stopped, never rewriting what the player has already read. The first
+  reply's state block stays authoritative so nothing is applied twice.
+
+### 6. A world that moves on its own
 
 `WorldSimulator` runs before each turn: NPCs advance along their routines, active threads press
 for their next beat, people who like or hate you act on the time that has passed, and unresolved
-promises age. These are given to the narrator as pressures, not scripts.
+promises age. These are given to the narrator as pressures, not scripts - and how hard it presses
+depends on the world's pacing.
+
+---
+
+## Pacing: what kind of world do you want?
+
+Chosen at creation, saved with the world, and changeable from Codex → Overview. It reaches the
+narrator's system prompt, the kind of choices offered, how hard the simulator pushes, and how the
+world is populated in the first place.
+
+| Style | What it does |
+| --- | --- |
+| **Sandbox** | Nothing dramatic is owed to any turn. No manufactured emergencies, no escalation, no cliffhangers. Events come only from what you did, what was already in motion, or the ordinary business of the place. Quiet turns are written with the same care as a crisis. |
+| **Slice of life** | Small, human stakes: misunderstandings, debts, awkward favours. Conflict that can be solved by talking, working or waiting. |
+| **Balanced** | Pressure and rest in turn. Consequence is earned rather than constant. |
+| **Dramatic** | Momentum, danger and closing deadlines. |
+
+In a sandbox world the starting threads are built as ordinary business at urgency 1-2, the opening
+scene is an ordinary moment rather than an inciting incident, the simulator stops pressing
+relationship pressure entirely, and the pacing choice is pinned as permanent canon.
+
+---
+
+## Cost and usage
+
+Settings shows what every model has cost across all worlds; Codex → Usage shows one world, broken
+down by model and by activity, with a per-turn average.
+
+- Token counts come from each provider's own usage figures, and are estimated from text length
+  where a provider does not report them.
+- Cost is estimated against a price list in `ai/ModelPricing.kt` - one file, with the date it was
+  recorded. Prices are labelled as indicative in the UI and dated, never presented as live.
+- A model with no price on record is reported as unpriced rather than guessed at, and any total
+  containing one says so.
 
 ---
 
@@ -97,7 +154,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 31 tests covering parsing, continuity and persistence
+./gradlew testDebugUnitTest         # 69 tests covering parsing, continuity, cost and persistence
 ```
 
 Without a keystore the release APK is signed with the debug key so it still installs.
@@ -107,10 +164,13 @@ a device and open it.
 ## First run
 
 1. **Settings** → paste an API key for at least one provider → **List models**.
-2. Choose a **narration** model. Optionally choose a cheaper **simulation** model for chapter
-   compaction, and an **image** model (`gpt-image-1` and Gemini's native image models support
-   reference images, which is what keeps faces consistent).
-3. **New world** → describe your world → take a suggestion or write your own → shape every field.
+2. Choose a **narration** model. The list is what your key can actually reach, newest first, with
+   prices and a cost band beside each one; search it or paste any model id. Optionally choose a
+   cheaper **simulation** model for chapter compaction, and an **image** model (OpenAI's
+   `gpt-image-*` and Gemini's native image models support reference images, which is what keeps
+   faces consistent).
+3. **New world** → pick how the world should treat you → describe it → take a suggestion or write
+   your own → shape every field.
 4. Describe your character the same way. The appearance field becomes your permanent visual identity.
 5. Play. Use the image button any time to capture the scene, a face or a place.
 
@@ -125,10 +185,12 @@ sent to the provider they belong to.
 com.narrate.app
 ├── ai/           One interface, four providers (OpenAI, Anthropic, Gemini, xAI).
 │                 Chat, image generation, image-to-image with references, live model listing.
+│                 ModelTaxonomy classifies and ranks what a provider returns; ModelPricing is
+│                 the single dated price list.
 ├── data/
 │   ├── entity/   14 Room entities: worlds, characters, locations, links, items, factions,
 │   │             relationships, memories, turns, threads, chapters, images,
-│   │             visual identities, continuity issues.
+│   │             visual identities, continuity issues, usage events.
 │   ├── dao/      Queries and flows.
 │   ├── repo/     WorldRepository (the only door to persistence) and WorldSnapshot
 │   │             (one consistent read of everything a turn needs).
@@ -141,8 +203,10 @@ com.narrate.app
 │   ├── TurnProtocol     Wire format and the tolerant parser.
 │   ├── StateApplier     Commits a state block, name-resolving everything first.
 │   ├── ContinuityGuard  Catches and repairs drift; feeds corrections forward.
-│   ├── WorldSimulator   Advances the world offscreen.
-│   ├── TurnDirector     Runs a turn; compacts history into chapters.
+│   ├── WorldSimulator   Advances the world offscreen, as hard as the pacing allows.
+│   ├── PlayStyle        Sandbox to dramatic: how much pressure the world applies.
+│   ├── UsageRecorder    Records tokens and estimated cost for every call.
+│   ├── TurnDirector     Runs a turn, completes an incomplete one, compacts history.
 │   ├── ImageDirector    Builds image prompts from live state, manages reference images.
 │   └── WorldForge       World and character creation, and the initial build.
 └── ui/           Compose. Netflix-style browse, immersive play screen, rich narration
@@ -152,9 +216,17 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 31 tests, including Robolectric tests that drive a real
-Room database end to end: a scripted narrator reply goes in, and the tests assert the save file
-comes out correct — the player moves, a new character is created where they should be, memories
-and threads are recorded, near-duplicate characters are merged, an unexplained teleport is
-flagged and the correction reaches the next prompt, prose survives a malformed reply, and the
-whole world reloads intact through a fresh repository instance.
+`./gradlew testDebugUnitTest` runs 69 tests, including Robolectric tests that drive a real Room
+database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
+out correct — the player moves, a new character is created where they should be, memories and
+threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
+the correction reaches the next prompt, prose survives a malformed reply, and the whole world
+reloads intact through a fresh repository instance.
+
+They also cover the newer machinery: a reply truncated mid-sentence is completed by a second call
+and joined without rewriting the prose or double-applying its state; choices written in the wrong
+shape are recovered while a bulleted list inside a scene is left alone; a sandbox world's prompt
+carries its pacing and a dramatic one does not; usage is recorded per call with the right estimated
+cost and deleted with its world; model listings drop embeddings and speech models and rank this
+year's flagships above a decade of legacy names; prices resolve for dated releases and unknown
+models stay unpriced; and the version 1 to 2 migration keeps an existing save intact.

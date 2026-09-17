@@ -9,6 +9,7 @@ import com.narrate.app.core.newId
 import com.narrate.app.core.truncate
 import com.narrate.app.data.entity.ChapterEntity
 import com.narrate.app.data.entity.TurnEntity
+import com.narrate.app.data.entity.WorldEntity
 import com.narrate.app.data.prefs.SettingsStore
 import com.narrate.app.data.repo.WorldRepository
 import com.narrate.app.data.repo.WorldSnapshot
@@ -17,7 +18,9 @@ import kotlinx.serialization.builtins.ListSerializer
 data class TurnResult(
     val turn: TurnEntity,
     val parsed: ParsedTurn,
-    val issues: List<ContinuityGuard.Issue>
+    val issues: List<ContinuityGuard.Issue>,
+    /** True when the first reply came back incomplete and a second call completed it. */
+    val wasRepaired: Boolean = false
 )
 
 /**
@@ -33,6 +36,7 @@ class TurnDirector(
 ) {
 
     private val applier = StateApplier(repo)
+    private val usage = UsageRecorder(repo)
 
     suspend fun opening(worldId: String): Result<TurnResult> =
         run(worldId, input = "", kind = "OPENING")
@@ -53,19 +57,47 @@ class TurnDirector(
         val system = Prompts.gameMaster(snapshot.world)
         val history = conversationHistory(snapshot)
         val context = buildContext(snapshot, input, kind, turnIndex)
+        val messages = history + ChatMessage.user(context)
+        val promptCharacters = system.length + messages.sumOf { it.content.length }
 
-        val response = ProviderRegistry.get(choice.provider).chat(
+        val provider = ProviderRegistry.get(choice.provider)
+        val apiKey = settings.apiKey(choice.provider)
+        val response = provider.chat(
             LlmRequest(
                 model = choice.model,
                 system = system,
-                messages = history + ChatMessage.user(context),
-                maxTokens = config.maxTokens,
+                messages = messages,
+                maxTokens = tokenBudget(snapshot.world, config),
                 temperature = config.temperature.toDouble()
             ),
-            settings.apiKey(choice.provider)
+            apiKey
         )
+        usage.recordChat(worldId, turnIndex, UsageRecorder.PURPOSE_NARRATION, response, promptCharacters)
 
-        val parsed = TurnParser.parse(response.text)
+        var parsed = TurnParser.parse(response.text)
+        var repaired = false
+
+        // A turn that arrived without choices or without a state block is not finished. Rather
+        // than papering over it in the UI, ask the model to complete what it started.
+        if (!parsed.isComplete) {
+            val completion = complete(
+                worldId = worldId,
+                turnIndex = turnIndex,
+                system = system,
+                messages = messages,
+                firstReply = response.text,
+                parsed = parsed,
+                wasCutOff = response.truncated || parsed.looksUnfinished,
+                choice = choice,
+                apiKey = apiKey,
+                config = config
+            )
+            if (completion != null) {
+                parsed = completion
+                repaired = true
+            }
+        }
+
         val applied = applier.apply(snapshot, parsed.delta, turnIndex, parsed.narration)
 
         if (!parsed.stateParsed && parsed.narration.isNotBlank()) {
@@ -102,7 +134,101 @@ class TurnDirector(
 
         compactIfNeeded(worldId)
 
-        TurnResult(turn, parsed, applied.report.issues)
+        TurnResult(turn, parsed, applied.report.issues, repaired)
+    }
+
+    /**
+     * Second call for an incomplete turn. It asks only for the missing pieces - a continuation
+     * of prose that stopped mid-sentence, the choices, the state block - and merges them into
+     * the turn the player is already reading, so nothing is rewritten underneath them.
+     */
+    private suspend fun complete(
+        worldId: String,
+        turnIndex: Int,
+        system: String,
+        messages: List<ChatMessage>,
+        firstReply: String,
+        parsed: ParsedTurn,
+        wasCutOff: Boolean,
+        choice: com.narrate.app.data.prefs.ModelChoice,
+        apiKey: String,
+        config: com.narrate.app.data.prefs.AppSettings
+    ): ParsedTurn? {
+        val needsChoices = parsed.choices.isEmpty()
+        val needsState = !parsed.stateParsed
+        if (!needsChoices && !needsState && !wasCutOff) return null
+
+        val instruction = Prompts.repairInstruction(wasCutOff, needsChoices, needsState)
+        val repairMessages = messages +
+            ChatMessage.assistant(firstReply.takeLast(MAX_ECHOED_REPLY)) +
+            ChatMessage.user(instruction)
+
+        val response = runCatching {
+            ProviderRegistry.get(choice.provider).chat(
+                LlmRequest(
+                    model = choice.model,
+                    system = system,
+                    messages = repairMessages,
+                    maxTokens = REPAIR_TOKENS,
+                    temperature = (config.temperature * 0.8).toDouble().coerceIn(0.1, 1.0)
+                ),
+                apiKey
+            )
+        }.getOrNull() ?: return null
+
+        usage.recordChat(
+            worldId, turnIndex, UsageRecorder.PURPOSE_REPAIR, response,
+            system.length + repairMessages.sumOf { it.content.length }
+        )
+
+        val completion = TurnParser.parse(response.text)
+
+        // Continue the prose only when it really was cut off, the completion actually contained
+        // prose, and that prose is a continuation rather than the model starting over.
+        val isContinuation = wasCutOff &&
+            completion.hasNarration &&
+            !completion.narration.startsWith(parsed.narration.take(80))
+        val narration = if (isContinuation) {
+            joinContinuation(parsed.narration, completion.narration)
+        } else {
+            parsed.narration
+        }
+
+        return parsed.copy(
+            narration = narration,
+            choices = completion.choices.ifEmpty { parsed.choices },
+            // The first reply's state block wins when it parsed: re-applying a second one
+            // would double-count memories and relationship changes.
+            delta = if (parsed.stateParsed) parsed.delta else completion.delta,
+            stateParsed = parsed.stateParsed || completion.stateParsed,
+            looksUnfinished = TurnParser.endsMidSentence(narration),
+            hasNarration = narration.isNotBlank(),
+            parseNotes = parsed.parseNotes + completion.parseNotes.map { "on completion: $it" }
+        )
+    }
+
+    /** Joins a continuation onto prose that stopped mid-word or mid-sentence. */
+    private fun joinContinuation(original: String, continuation: String): String {
+        val head = original.trimEnd()
+        val tail = continuation.trimStart()
+        val needsSpace = head.isNotEmpty() && tail.isNotEmpty() &&
+            !head.last().isWhitespace() && tail.first().isLetterOrDigit() &&
+            head.last() !in setOf('-', '\u2014')
+        return if (needsSpace) "$head $tail" else head + tail
+    }
+
+    /**
+     * Long narration plus a full state block plus choices does not fit in a small budget, and
+     * running out of room is exactly how a turn loses its choices. The player's setting is a
+     * floor, never a ceiling that the format cannot fit inside.
+     */
+    private fun tokenBudget(world: WorldEntity, config: com.narrate.app.data.prefs.AppSettings): Int {
+        val floor = when (world.narrationLength) {
+            "SHORT" -> 4000
+            "EPIC" -> 9000
+            else -> 6500
+        }
+        return maxOf(config.maxTokens, floor)
     }
 
     /** Recent turns replayed as a real conversation, so the model feels the rhythm of the scene. */
@@ -151,7 +277,7 @@ class TurnDirector(
             val ticks = WorldSimulator.simulate(snapshot, lastTime)
             if (ticks.isNotEmpty()) {
                 appendLine()
-                appendLine(WorldSimulator.render(ticks))
+                appendLine(WorldSimulator.render(ticks, PlayStyle.from(snapshot.world.playStyle)))
             }
         }
 
@@ -167,7 +293,10 @@ class TurnDirector(
 
         appendLine()
         appendLine("# THIS TURN")
-        appendLine(if (kind == "OPENING") Prompts.openingInstruction() else Prompts.playerInputInstruction(input, kind))
+        appendLine(
+            if (kind == "OPENING") Prompts.openingInstruction(snapshot.world)
+            else Prompts.playerInputInstruction(input, kind)
+        )
         appendLine()
         appendLine(
             "Respond with the four sections in order: ${TurnProtocol.NARRATION}, ${TurnProtocol.CHOICES}, " +
@@ -202,7 +331,7 @@ class TurnDirector(
         }
 
         val choice = settings.simulationOrNarration()
-        val summary = runCatching {
+        val summaryResponse = runCatching {
             ProviderRegistry.get(choice.provider).chat(
                 LlmRequest(
                     model = choice.model,
@@ -231,8 +360,10 @@ class TurnDirector(
                     temperature = 0.3
                 ),
                 settings.apiKey(choice.provider)
-            ).text
+            )
         }.getOrNull() ?: return
+        usage.recordChat(worldId, world.turnCount, UsageRecorder.PURPOSE_CHAPTER, summaryResponse, transcript.length)
+        val summary = summaryResponse.text
 
         val lines = summary.trim().lines()
         val title = lines.firstOrNull()?.trim()?.removePrefix("#")?.trim()?.removeSurrounding("\"")
@@ -254,5 +385,9 @@ class TurnDirector(
 
     private companion object {
         const val CHAPTER_SIZE = 10
+        /** Enough for choices and a state block, not enough to pay for a second narration. */
+        const val REPAIR_TOKENS = 3500
+        /** The tail of the first reply is all the model needs to pick up where it stopped. */
+        const val MAX_ECHOED_REPLY = 6000
     }
 }

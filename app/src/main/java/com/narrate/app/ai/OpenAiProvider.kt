@@ -53,16 +53,19 @@ class OpenAiProvider(private val baseUrl: String = "https://api.openai.com/v1") 
                 .build()
         )
         val root = AppJson.parseToJsonElement(body).jsonObject
-        val text = root["choices"]?.jsonArray?.firstOrNull()
-            ?.jsonObject?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
+        val choice = root["choices"]?.jsonArray?.firstOrNull()?.jsonObject
+        val text = choice?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
             ?: throw ProviderException(id, "No content returned.")
+        val finishReason = choice["finish_reason"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val usage = root["usage"]?.jsonObject
         return LlmResponse(
             text = text,
             model = root["model"]?.jsonPrimitive?.contentOrNull ?: request.model,
             provider = id,
             inputTokens = usage?.get("prompt_tokens")?.jsonPrimitive?.intOrNull ?: 0,
-            outputTokens = usage?.get("completion_tokens")?.jsonPrimitive?.intOrNull ?: 0
+            outputTokens = usage?.get("completion_tokens")?.jsonPrimitive?.intOrNull ?: 0,
+            finishReason = finishReason,
+            truncated = finishReason == "length"
         )
     }
 
@@ -148,28 +151,32 @@ class OpenAiProvider(private val baseUrl: String = "https://api.openai.com/v1") 
                 id,
                 Request.Builder().url("$baseUrl/models").addHeader("Authorization", "Bearer $apiKey").get().build()
             )
-            AppJson.parseToJsonElement(body).jsonObject["data"]?.jsonArray.orEmpty().mapNotNull { element ->
-                val modelId = element.jsonObject["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                val isImage = modelId.contains("image") || modelId.startsWith("dall-e")
-                ModelInfo(
-                    id = modelId,
-                    provider = id,
-                    supportsText = !isImage,
-                    supportsImageGeneration = isImage,
-                    supportsImageReferences = modelId.startsWith("gpt-image")
-                )
-            }.sortedBy { it.id }
+            val listed = AppJson.parseToJsonElement(body).jsonObject["data"]?.jsonArray.orEmpty()
+                .mapNotNull { element ->
+                    val modelId = element.jsonObject["id"]?.jsonPrimitive?.contentOrNull
+                        ?: return@mapNotNull null
+                    ModelTaxonomy.describe(id, modelId)
+                }
+            ModelTaxonomy.sort(listed).ifEmpty { catalog() }
         }.getOrElse { catalog() }
     }
 
-    override fun catalog(): List<ModelInfo> = listOf(
-        ModelInfo("gpt-5", id, "GPT-5", note = "Flagship narration"),
-        ModelInfo("gpt-5-mini", id, "GPT-5 mini", note = "Fast simulation"),
-        ModelInfo("gpt-4.1", id, "GPT-4.1"),
-        ModelInfo("gpt-4o", id, "GPT-4o"),
-        ModelInfo("gpt-4o-mini", id, "GPT-4o mini"),
-        ModelInfo("gpt-image-1", id, "GPT Image 1", supportsText = false, supportsImageGeneration = true, supportsImageReferences = true, note = "Supports reference images"),
-        ModelInfo("dall-e-3", id, "DALL-E 3", supportsText = false, supportsImageGeneration = true)
+    /** Fallback only, for before a key is entered. The live listing always wins. */
+    override fun catalog(): List<ModelInfo> = ModelTaxonomy.sort(
+        listOfNotNull(
+            ModelTaxonomy.describe(id, "gpt-6-astra"),
+            ModelTaxonomy.describe(id, "gpt-5.6-sol"),
+            ModelTaxonomy.describe(id, "gpt-5.6-terra"),
+            ModelTaxonomy.describe(id, "gpt-5.6-luna"),
+            ModelTaxonomy.describe(id, "gpt-5.4"),
+            ModelTaxonomy.describe(id, "gpt-5.4-mini"),
+            ModelTaxonomy.describe(id, "gpt-5.1"),
+            ModelTaxonomy.describe(id, "gpt-5-mini"),
+            ModelTaxonomy.describe(id, "gpt-image-2"),
+            ModelTaxonomy.describe(id, "gpt-image-1.5"),
+            ModelTaxonomy.describe(id, "gpt-image-1"),
+            ModelTaxonomy.describe(id, "gpt-image-1-mini")
+        )
     )
 
     private fun requireKey(apiKey: String) {

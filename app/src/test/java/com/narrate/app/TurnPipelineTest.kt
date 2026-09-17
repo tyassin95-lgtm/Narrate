@@ -43,14 +43,45 @@ class TurnPipelineTest {
     private val warehouseId = "loc-warehouse"
     private val playerId = "pc-1"
 
+    /**
+     * A narrator on a script. Replies are queued, so a turn that needs a second call - a
+     * truncated reply being completed - can be driven deterministically.
+     */
     private class ScriptedProvider : AiProvider {
         override val id = ProviderId.OPENAI
+        private val queue = ArrayDeque<LlmResponse>()
         var nextResponse: String = ""
+            set(value) {
+                field = value
+                queue.clear()
+            }
         var lastPrompt: String = ""
-        override suspend fun chat(request: LlmRequest, apiKey: String): LlmResponse {
-            lastPrompt = request.system + "\n" + request.messages.joinToString("\n") { it.content }
-            return LlmResponse(nextResponse, request.model, id)
+        val prompts = mutableListOf<String>()
+        var calls = 0
+
+        fun enqueue(text: String, truncated: Boolean = false, inputTokens: Int = 0, outputTokens: Int = 0) {
+            queue.addLast(
+                LlmResponse(
+                    text = text,
+                    model = "scripted-model",
+                    provider = ProviderId.OPENAI,
+                    inputTokens = inputTokens,
+                    outputTokens = outputTokens,
+                    finishReason = if (truncated) "length" else "stop",
+                    truncated = truncated
+                )
+            )
         }
+
+        override suspend fun chat(request: LlmRequest, apiKey: String): LlmResponse {
+            calls++
+            lastPrompt = request.system + "\n" + request.messages.joinToString("\n") { it.content }
+            prompts += lastPrompt
+            val queued = queue.removeFirstOrNull()
+            return queued?.copy(model = request.model)
+                ?: LlmResponse(nextResponse, request.model, id, finishReason = "stop")
+        }
+
         override suspend fun listModels(apiKey: String) = catalog()
         override fun catalog() = listOf(ModelInfo("scripted-model", ProviderId.OPENAI))
     }
@@ -240,9 +271,270 @@ class TurnPipelineTest {
         assertEquals("Vale", snapshot.player?.name)
     }
 
+    // --- the missing-choices investigation ------------------------------------------------
+
+    @Test
+    fun `a reply cut off at the token ceiling is completed rather than left without choices`() = runBlocking {
+        // The narrator runs long and is truncated mid-sentence: no choices, no state block.
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            The tide is further out than it should be at this hour, and the mud smells of iron.
+            Elena is already on the steps with her coat buttoned to the throat, and when she sees
+            you she does not
+            """.trimIndent(),
+            truncated = true
+        )
+        // The completion picks up mid-sentence and supplies what was missing.
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            wave. She simply waits, watching the water come back in.
+            ===CHOICES===
+            - Ask her how long she has been waiting
+            - "You knew I would come." -- test how much she has guessed
+            - Say nothing and watch the tide with her
+            ===STATE===
+            {
+              "story_time": "Day 1, dusk",
+              "summary": "Vale met Elena on the harbour steps at low tide.",
+              "characters_new": [{"name": "Elena Vasquez", "role": "dock clerk", "location": "Old Harbour"}],
+              "memories": [{"text": "Elena waited for Vale on the harbour steps.", "kind": "EVENT",
+                "importance": 3, "subjects": ["Elena Vasquez"]}]
+            }
+            ===END===
+            """.trimIndent()
+        )
+
+        val result = director.take(worldId, "Go down to the harbour", "ACTION")
+        assertTrue(result.exceptionOrNull()?.message ?: "ok", result.isSuccess)
+        assertTrue("the turn should have been completed by a second call", result.getOrThrow().wasRepaired)
+        assertEquals(2, scripted.calls)
+
+        val turn = repo.turnDao.last(worldId)!!
+        assertTrue("the prose must be joined, not restarted", turn.narration.contains("she does not wave"))
+        assertTrue(turn.narration.startsWith("The tide is further out"))
+        assertTrue("the completed turn must carry choices", turn.choicesJson.contains("how long she has been waiting"))
+        assertEquals("Day 1, dusk", repo.world(worldId)!!.storyTime)
+        assertEquals(1, repo.characterDao.all(worldId).count { it.name.contains("Elena") })
+
+        // The completion prompt must ask for a continuation, not a rewrite.
+        val repairPrompt = scripted.prompts.last()
+        assertTrue(repairPrompt.contains("cut off"))
+        assertTrue(repairPrompt.contains("Do not repeat or rewrite anything you already wrote"))
+    }
+
+    @Test
+    fun `a complete reply that simply forgot its choices gets them without rewriting the prose`() = runBlocking {
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            The office is empty. Someone has taken the ledger from the desk and left the drawer open.
+            ===STATE===
+            {"story_time": "Day 1, noon", "summary": "Vale found the ledger missing.",
+             "memories": [{"text": "The harbour ledger was taken from the office.", "kind": "DISCOVERY",
+               "importance": 4, "subjects": []}]}
+            ===END===
+            """.trimIndent()
+        )
+        scripted.enqueue(
+            """
+            ===CHOICES===
+            - Search the drawer
+            - Ask the dockhands who came through
+            - Leave before anyone finds you here
+            ===END===
+            """.trimIndent()
+        )
+
+        val result = director.take(worldId, "Check the office", "ACTION")
+        assertTrue(result.isSuccess)
+        val turn = repo.turnDao.last(worldId)!!
+        assertEquals(
+            "the narration the player already read must be untouched",
+            "The office is empty. Someone has taken the ledger from the desk and left the drawer open.",
+            turn.narration
+        )
+        assertTrue(turn.choicesJson.contains("Search the drawer"))
+        // The first reply's state block is authoritative: the memory must not be recorded twice.
+        assertEquals(1, repo.memoryDao.all(worldId).size)
+
+        val repairPrompt = scripted.prompts.last()
+        assertTrue(repairPrompt.contains("Do not rewrite or resend the narration"))
+    }
+
+    @Test
+    fun `choices written as a plain list at the end of the prose are still offered`() = runBlocking {
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            The rain starts again as you reach the gate. The watchman does not look up from his paper.
+
+            What do you do?
+            - Knock on the window
+            - Walk around to the yard
+            - Wait for the rain to pass
+            ===STATE===
+            {"story_time": "Day 1, evening", "summary": "Vale reached the gate in the rain."}
+            ===END===
+            """.trimIndent()
+        )
+
+        val result = director.take(worldId, "Head for the gate", "ACTION")
+        assertTrue(result.isSuccess)
+        assertEquals("no second call should be needed", 1, scripted.calls)
+        val turn = repo.turnDao.last(worldId)!!
+        assertTrue(turn.choicesJson.contains("Knock on the window"))
+        assertTrue("the list must be lifted out of the prose", !turn.narration.contains("Knock on the window"))
+        assertTrue("the prompt line goes with it", !turn.narration.contains("What do you do?"))
+        assertTrue(turn.narration.contains("The watchman does not look up"))
+    }
+
+    @Test
+    fun `a turn is not repaired twice however incomplete the reply stays`() = runBlocking {
+        scripted.enqueue("The fog thickens.", truncated = true)
+        scripted.enqueue("Still nothing useful.")
+        val result = director.take(worldId, "Wait", "ACTION")
+        assertTrue(result.isSuccess)
+        assertEquals("exactly one completion attempt", 2, scripted.calls)
+        assertEquals(1, repo.turnDao.all(worldId).size)
+    }
+
+    @Test
+    fun `a completion that returns only choices never leaks its JSON into the prose`() = runBlocking {
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            The lamp gutters and goes out, and the room is dark for a moment before your eyes adjust.
+            """.trimIndent(),
+            truncated = true
+        )
+        // The model follows the instruction to omit the narration section entirely.
+        scripted.enqueue(
+            """
+            ===CHOICES===
+            - Find the matches
+            - Wait for your eyes to adjust
+            ===STATE===
+            {"story_time": "Day 1, night", "summary": "The lamp went out."}
+            ===END===
+            """.trimIndent()
+        )
+
+        val result = director.take(worldId, "Watch the lamp", "ACTION")
+        assertTrue(result.isSuccess)
+        val turn = repo.turnDao.last(worldId)!!
+        assertEquals(
+            "The lamp gutters and goes out, and the room is dark for a moment before your eyes adjust.",
+            turn.narration
+        )
+        assertTrue("no JSON may reach the page", !turn.narration.contains("story_time"))
+        assertTrue("no markers may reach the page", !turn.narration.contains("==="))
+        assertTrue(turn.choicesJson.contains("Find the matches"))
+        assertEquals("Day 1, night", repo.world(worldId)!!.storyTime)
+    }
+
+    // --- pacing ---------------------------------------------------------------------------
+
+    @Test
+    fun `a sandbox world tells the narrator not to manufacture drama`() = runBlocking {
+        repo.saveWorld(repo.world(worldId)!!.copy(playStyle = "SANDBOX"))
+        scripted.nextResponse = minimalResponse("Day 1, midday")
+        director.take(worldId, "Sit on the wall and watch the boats", "ACTION")
+
+        val prompt = scripted.prompts.first()
+        assertTrue(prompt.contains("PACING: SANDBOX"))
+        assertTrue(prompt.contains("Do not manufacture emergencies"))
+        assertTrue(prompt.contains("Nothing dramatic is owed to any turn"))
+        assertTrue("choices should suit a quiet world", prompt.contains("At least one option should be small and unhurried"))
+        assertTrue(prompt.contains("The CHOICES section is never optional"))
+    }
+
+    @Test
+    fun `a dramatic world keeps its pressure`() = runBlocking {
+        repo.saveWorld(repo.world(worldId)!!.copy(playStyle = "DRAMATIC"))
+        scripted.nextResponse = minimalResponse("Day 1, midday")
+        director.take(worldId, "Run", "ACTION")
+
+        val prompt = scripted.prompts.first()
+        assertTrue(prompt.contains("PACING: DRAMATIC"))
+        assertTrue(!prompt.contains("Do not manufacture emergencies"))
+    }
+
+    @Test
+    fun `the play style survives a reload`() = runBlocking {
+        repo.saveWorld(repo.world(worldId)!!.copy(playStyle = "SANDBOX"))
+        val reopened = WorldRepository(ApplicationProvider.getApplicationContext())
+        assertEquals("SANDBOX", reopened.world(worldId)!!.playStyle)
+    }
+
+    // --- usage ----------------------------------------------------------------------------
+
+    @Test
+    fun `every call is recorded against the world with an estimated cost`() = runBlocking {
+        settings.setNarrationModel(ProviderId.OPENAI, "gpt-5.4-mini")
+        scripted.enqueue(minimalResponse("Day 1, midday"), inputTokens = 12_000, outputTokens = 900)
+        director.take(worldId, "Look around", "ACTION")
+
+        val usage = repo.usageForWorld(worldId)
+        assertEquals(1, usage.size)
+        val event = usage.first()
+        assertEquals("NARRATION", event.purpose)
+        assertEquals("gpt-5.4-mini", event.model)
+        assertEquals("OPENAI", event.provider)
+        assertEquals(12_000, event.inputTokens)
+        assertEquals(900, event.outputTokens)
+        assertTrue("a listed model must price", event.costKnown)
+        // 12k in at $0.75/M plus 900 out at $4.50/M.
+        assertEquals(0.009 + 0.00405, event.estimatedCost, 0.00001)
+    }
+
+    @Test
+    fun `token counts are estimated when the provider reports none`() = runBlocking {
+        scripted.enqueue(minimalResponse("Day 1, midday"))
+        director.take(worldId, "Look around", "ACTION")
+        val event = repo.usageForWorld(worldId).first()
+        assertTrue("input tokens should be estimated from the prompt", event.inputTokens > 100)
+        assertTrue(event.outputTokens > 0)
+    }
+
+    @Test
+    fun `a completion call is recorded separately so its cost is visible`() = runBlocking {
+        scripted.enqueue("The fog thickens.", truncated = true)
+        scripted.enqueue(
+            """
+            ===CHOICES===
+            - Turn back
+            - Keep walking
+            ===STATE===
+            {"story_time": "Day 1, night", "summary": "Vale walked into the fog."}
+            ===END===
+            """.trimIndent()
+        )
+        director.take(worldId, "Walk into the fog", "ACTION")
+
+        val usage = repo.usageForWorld(worldId)
+        assertEquals(2, usage.size)
+        assertEquals(setOf("NARRATION", "REPAIR"), usage.map { it.purpose }.toSet())
+    }
+
+    @Test
+    fun `usage is deleted with its world`() = runBlocking {
+        scripted.nextResponse = minimalResponse("Day 1, midday")
+        director.take(worldId, "Look around", "ACTION")
+        assertTrue(repo.usageForWorld(worldId).isNotEmpty())
+        repo.deleteWorld(worldId)
+        assertTrue(repo.usageForWorld(worldId).isEmpty())
+        assertTrue(repo.characterDao.all(worldId).isEmpty())
+        assertTrue(repo.turnDao.all(worldId).isEmpty())
+    }
+
     private fun minimalResponse(storyTime: String) = """
         ===NARRATION===
         Nothing much happens.
+        ===CHOICES===
+        - Wait a while longer
+        - Walk down to the water
         ===STATE===
         {"story_time": "$storyTime", "summary": "A quiet moment."}
         ===END===

@@ -2,6 +2,7 @@ package com.narrate.app.engine
 
 import com.narrate.app.ai.ImageReference
 import com.narrate.app.ai.ImageRequest
+import com.narrate.app.ai.ModelTaxonomy
 import com.narrate.app.ai.ProviderException
 import com.narrate.app.ai.ProviderRegistry
 import com.narrate.app.core.newId
@@ -34,6 +35,8 @@ class ImageDirector(
     private val settings: SettingsStore
 ) {
 
+    private val usage = UsageRecorder(repo)
+
     suspend fun generate(
         snapshot: WorldSnapshot,
         subject: ImageSubject,
@@ -45,9 +48,9 @@ class ImageDirector(
         val provider = ProviderRegistry.get(choice.provider)
 
         val plan = plan(snapshot, subject, extraDirection)
-        val supportsReferences = provider.catalog()
-            .firstOrNull { it.id == choice.model }?.supportsImageReferences
-            ?: (choice.model.startsWith("gpt-image") || choice.model.contains("flash-image"))
+        // Asked of the taxonomy rather than the catalog, so a model the provider listed but
+        // Narrate has never heard of is still classified correctly.
+        val supportsReferences = ModelTaxonomy.supportsImageReferences(choice.provider, choice.model)
         val references = if (settings.current.useReferenceImages && supportsReferences) {
             loadReferences(plan.referenceImageIds)
         } else {
@@ -85,6 +88,7 @@ class ImageDirector(
         )
         repo.saveImage(image)
         bindToSubjects(snapshot, plan, image)
+        usage.recordImage(snapshot.world.id, snapshot.world.turnCount, choice.provider, choice.model)
         image
     }
 

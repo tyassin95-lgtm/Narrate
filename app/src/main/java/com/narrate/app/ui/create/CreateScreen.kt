@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.narrate.app.engine.CharacterConcept
+import com.narrate.app.engine.PlayStyle
 import com.narrate.app.engine.WorldConcept
 import com.narrate.app.ui.components.*
 import com.narrate.app.ui.theme.NarrateColors
@@ -115,7 +116,9 @@ private fun WorldDirectionStep(state: CreateUiState, viewModel: CreateViewModel)
         style = MaterialTheme.typography.bodyMedium,
         color = NarrateColors.TextSecondary
     )
-    Spacer(Modifier.height(16.dp))
+    Spacer(Modifier.height(18.dp))
+    PlayStylePicker(state.playStyle, viewModel::setPlayStyle)
+    Spacer(Modifier.height(18.dp))
     NarrateField(
         value = state.worldPrompt,
         onValueChange = viewModel::setWorldPrompt,
@@ -198,6 +201,8 @@ private fun WorldDetailsStep(state: CreateUiState, viewModel: CreateViewModel) {
         "Opening situation", minLines = 3,
         supporting = "Where and how your first scene begins."
     )
+    Spacer(Modifier.height(18.dp))
+    PlayStylePicker(state.playStyle, viewModel::setPlayStyle)
     Spacer(Modifier.height(16.dp))
     Text("Narration length", style = MaterialTheme.typography.labelLarge, color = NarrateColors.TextSecondary)
     Spacer(Modifier.height(8.dp))
@@ -338,6 +343,58 @@ private fun BuildingStep(state: CreateUiState) {
             style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
             color = NarrateColors.TextMuted
         )
+    }
+}
+
+/**
+ * How much the world pushes. This is saved with the world and shapes the narrator, the
+ * choices it offers, the offscreen simulation and how the world is first populated.
+ */
+@Composable
+private fun PlayStylePicker(selected: PlayStyle, onSelect: (PlayStyle) -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Text("How should this world treat you?", style = MaterialTheme.typography.titleLarge, color = NarrateColors.TextPrimary)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "You can live quietly in a world, or be pulled through one. This is saved with the world " +
+                "and shapes everything the narrator does.",
+            style = MaterialTheme.typography.bodySmall,
+            color = NarrateColors.TextMuted
+        )
+        Spacer(Modifier.height(10.dp))
+        PlayStyle.entries.forEach { style ->
+            val isSelected = style == selected
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .background(
+                        if (isSelected) NarrateColors.Accent.copy(alpha = 0.14f) else NarrateColors.Surface,
+                        RoundedCornerShape(8.dp)
+                    )
+                    .border(
+                        1.dp,
+                        if (isSelected) NarrateColors.Accent else NarrateColors.Divider,
+                        RoundedCornerShape(8.dp)
+                    )
+                    .clickable { onSelect(style) }
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        style.label,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (isSelected) NarrateColors.TextPrimary else NarrateColors.TextSecondary
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(style.blurb, style = MaterialTheme.typography.bodySmall, color = NarrateColors.TextMuted)
+                }
+                if (isSelected) {
+                    Text("CHOSEN", style = MaterialTheme.typography.labelSmall, color = NarrateColors.Accent)
+                }
+            }
+        }
     }
 }
 

@@ -31,12 +31,19 @@ import com.narrate.app.ai.ModelInfo
 import com.narrate.app.ai.ProviderId
 import com.narrate.app.ai.ProviderRegistry
 import com.narrate.app.container
+import com.narrate.app.ai.ModelPricing
+import com.narrate.app.data.entity.UsageEntity
 import com.narrate.app.data.prefs.AppSettings
+import com.narrate.app.engine.UsageGroup
+import com.narrate.app.engine.UsageRecorder
+import com.narrate.app.engine.UsageSummary
 import com.narrate.app.ui.components.*
 import com.narrate.app.ui.theme.NarrateColors
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 enum class ModelRole(val label: String, val description: String) {
@@ -47,6 +54,17 @@ enum class ModelRole(val label: String, val description: String) {
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val store = application.container.settings
+    private val repository = application.container.repository
+
+    /** Every recorded call, newest first, across every world. */
+    val usage: StateFlow<List<UsageEntity>> = repository.observeAllUsage()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    init {
+        // Ask each configured provider what it serves, so the picker opens on a current list
+        // rather than on the built-in fallback.
+        ProviderId.entries.filter { store.hasApiKey(it) }.forEach { refreshModels(it) }
+    }
 
     val settings: StateFlow<AppSettings> = store.settings
 
@@ -65,11 +83,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setApiKey(provider: ProviderId, value: String) {
         store.setApiKey(provider, value)
-        if (value.isNotBlank()) refreshModels(provider)
+        if (value.isNotBlank()) refreshModels(provider, announce = true)
     }
 
     /** Ask the provider what it actually serves, so the list is never stale. */
-    fun refreshModels(provider: ProviderId) {
+    fun refreshModels(provider: ProviderId, announce: Boolean = false) {
         viewModelScope.launch {
             _loadingModels.value = provider
             val result = runCatching { ProviderRegistry.get(provider).listModels(store.apiKey(provider)) }
@@ -77,10 +95,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             result.onSuccess { list ->
                 if (list.isNotEmpty()) {
                     _models.value = _models.value + (provider to list)
-                    _message.value = "${provider.displayName}: ${list.size} models available."
+                    if (announce) {
+                        val text = list.count { it.supportsText }
+                        val image = list.count { it.supportsImageGeneration }
+                        _message.value = "${provider.displayName}: $text narration models, $image image models."
+                    }
                 }
             }.onFailure {
-                _message.value = it.message ?: "Could not list models."
+                if (announce) _message.value = it.message ?: "Could not list models."
             }
         }
     }
@@ -110,6 +132,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
     val models by viewModel.models.collectAsStateWithLifecycle()
     val loading by viewModel.loadingModels.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    val usage by viewModel.usage.collectAsStateWithLifecycle()
 
     Scaffold(
         containerColor = NarrateColors.Background,
@@ -140,7 +163,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                     configured = provider in settings.configuredProviders,
                     loading = loading == provider,
                     onSave = { viewModel.setApiKey(provider, it) },
-                    onRefresh = { viewModel.refreshModels(provider) }
+                    onRefresh = { viewModel.refreshModels(provider, announce = true) }
                 )
                 Spacer(Modifier.height(10.dp))
             }
@@ -161,12 +184,25 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                     selectedProvider = current.provider,
                     selectedModel = current.model,
                     configured = settings.configuredProviders,
-                    onSelect = { provider, model -> viewModel.select(role, provider, model) }
+                    loadingProvider = loading,
+                    onSelect = { provider, model -> viewModel.select(role, provider, model) },
+                    onRefresh = { viewModel.refreshModels(it, announce = true) }
                 )
                 Spacer(Modifier.height(14.dp))
             }
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Prices are indicative list prices recorded on ${ModelPricing.AS_OF} and are not fetched " +
+                    "live. Check your provider for current rates.",
+                style = MaterialTheme.typography.labelSmall,
+                color = NarrateColors.TextMuted
+            )
+
+            Spacer(Modifier.height(22.dp))
+            UsagePanel(usage)
+
+            Spacer(Modifier.height(22.dp))
             Text("World behaviour", style = MaterialTheme.typography.headlineMedium, color = NarrateColors.TextPrimary)
             Spacer(Modifier.height(8.dp))
 
@@ -206,8 +242,9 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             SliderRow(
                 "Response length limit",
                 settings.maxTokens.toFloat(),
-                1024f..16000f,
-                "Maximum tokens per turn: ${settings.maxTokens}."
+                2048f..32000f,
+                "Up to ${settings.maxTokens} tokens per turn. Narrate raises this on its own if a " +
+                    "turn needs more room, so a long scene never loses its choices."
             ) { viewModel.setMaxTokens(it.toInt()) }
 
             SliderRow(
@@ -304,9 +341,13 @@ private fun ModelPicker(
     selectedProvider: ProviderId,
     selectedModel: String,
     configured: Set<ProviderId>,
-    onSelect: (ProviderId, String) -> Unit
+    loadingProvider: ProviderId?,
+    onSelect: (ProviderId, String) -> Unit,
+    onRefresh: (ProviderId) -> Unit
 ) {
-    var expandedProvider by remember(role) { mutableStateOf(selectedProvider) }
+    var openProvider by remember(role) { mutableStateOf(selectedProvider) }
+    var query by remember(role) { mutableStateOf("") }
+    var showAll by remember(role) { mutableStateOf(false) }
     var customModel by remember(role) { mutableStateOf("") }
 
     Column(
@@ -324,65 +365,85 @@ private fun ModelPicker(
             style = MaterialTheme.typography.bodyMedium,
             color = if (selectedModel.isBlank()) NarrateColors.TextMuted else NarrateColors.Accent
         )
+        ModelPricing.summary(selectedProvider, selectedModel)?.let { price ->
+            Text(price, style = MaterialTheme.typography.labelSmall, color = NarrateColors.TextSecondary)
+        }
         Spacer(Modifier.height(10.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(ProviderId.entries.toList()) { provider ->
                 Pill(
                     text = provider.displayName + if (provider in configured) "" else " (no key)",
-                    selected = expandedProvider == provider
-                ) { expandedProvider = provider }
+                    selected = openProvider == provider
+                ) {
+                    openProvider = provider
+                    query = ""
+                    showAll = false
+                }
             }
         }
         Spacer(Modifier.height(10.dp))
-        val candidates = (models[expandedProvider].orEmpty()).filter {
+
+        val available = (models[openProvider].orEmpty()).filter {
             if (role == ModelRole.IMAGE) it.supportsImageGeneration else it.supportsText
         }
-        if (candidates.isEmpty()) {
-            Text(
-                if (role == ModelRole.IMAGE) "${expandedProvider.displayName} has no image models listed. Add a key and tap List models."
-                else "No models listed. Add a key and tap List models.",
+        val matching = available.filter {
+            query.isBlank() || it.id.contains(query, true) || it.label.contains(query, true)
+        }
+
+        if (available.size > COLLAPSED_MODELS) {
+            NarrateField(query, { query = it }, "Search ${openProvider.displayName} models")
+            Spacer(Modifier.height(8.dp))
+        }
+
+        when {
+            loadingProvider == openProvider -> Text(
+                "Asking ${openProvider.displayName} what it serves...",
                 style = MaterialTheme.typography.bodySmall,
                 color = NarrateColors.TextMuted
             )
-        }
-        candidates.take(40).forEach { model ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelect(expandedProvider, model.id) }
-                    .padding(vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RadioButton(
-                    selected = selectedProvider == expandedProvider && selectedModel == model.id,
-                    onClick = { onSelect(expandedProvider, model.id) },
-                    colors = RadioButtonDefaults.colors(
-                        selectedColor = NarrateColors.Accent,
-                        unselectedColor = NarrateColors.TextMuted
-                    )
+            available.isEmpty() -> Column {
+                Text(
+                    if (openProvider !in configured) {
+                        "Add a ${openProvider.displayName} key above to see the models your account can use."
+                    } else if (role == ModelRole.IMAGE) {
+                        "${openProvider.displayName} listed no image models for this key."
+                    } else {
+                        "No models listed yet."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NarrateColors.TextMuted
                 )
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        model.label,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = NarrateColors.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                if (openProvider in configured) {
+                    Spacer(Modifier.height(6.dp))
+                    SecondaryButton("Refresh model list") { onRefresh(openProvider) }
+                }
+            }
+            matching.isEmpty() -> Text(
+                "Nothing matches \"$query\".",
+                style = MaterialTheme.typography.bodySmall,
+                color = NarrateColors.TextMuted
+            )
+            else -> {
+                val visible = if (showAll || query.isNotBlank()) matching else matching.take(COLLAPSED_MODELS)
+                visible.forEach { model ->
+                    ModelRow(
+                        model = model,
+                        selected = selectedProvider == openProvider && selectedModel == model.id,
+                        onSelect = { onSelect(openProvider, model.id) }
                     )
-                    val notes = listOfNotNull(
-                        model.note.takeIf { it.isNotBlank() },
-                        if (model.supportsImageReferences) "reference images" else null
-                    )
-                    if (notes.isNotEmpty()) {
+                }
+                if (!showAll && query.isBlank() && matching.size > COLLAPSED_MODELS) {
+                    TextButton(onClick = { showAll = true }) {
                         Text(
-                            notes.joinToString(" - "),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = NarrateColors.TextMuted
+                            "Show all ${matching.size} models",
+                            color = NarrateColors.Accent,
+                            style = MaterialTheme.typography.labelSmall
                         )
                     }
                 }
             }
         }
+
         Spacer(Modifier.height(8.dp))
         Row(verticalAlignment = Alignment.Bottom) {
             Box(Modifier.weight(1f)) {
@@ -390,11 +451,182 @@ private fun ModelPicker(
             }
             Spacer(Modifier.width(8.dp))
             SecondaryButton("Use", enabled = customModel.isNotBlank()) {
-                onSelect(expandedProvider, customModel.trim())
+                onSelect(openProvider, customModel.trim())
                 customModel = ""
             }
         }
     }
+}
+
+private const val COLLAPSED_MODELS = 8
+
+@Composable
+private fun ModelRow(model: ModelInfo, selected: Boolean, onSelect: () -> Unit) {
+    val price = ModelPricing.summary(model.provider, model.id)
+    val band = ModelPricing.band(model.provider, model.id)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onSelect)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = onSelect,
+            colors = RadioButtonDefaults.colors(
+                selectedColor = NarrateColors.Accent,
+                unselectedColor = NarrateColors.TextMuted
+            )
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                model.label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = NarrateColors.TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (model.label != model.id) {
+                Text(
+                    model.id,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NarrateColors.TextMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                price ?: "no published price on record",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (price == null) NarrateColors.TextMuted else NarrateColors.TextSecondary,
+                maxLines = 2
+            )
+            if (model.note.isNotBlank()) {
+                Text(model.note, style = MaterialTheme.typography.labelSmall, color = NarrateColors.TextMuted)
+            }
+        }
+        band?.let {
+            Spacer(Modifier.width(8.dp))
+            CostBadge(it)
+        }
+    }
+}
+
+@Composable
+private fun CostBadge(band: String) {
+    val color = when (band) {
+        "CHEAPEST" -> NarrateColors.CallAccent
+        "MID" -> NarrateColors.Gold
+        "PREMIUM" -> NarrateColors.AccentSoft
+        else -> NarrateColors.Accent
+    }
+    Text(
+        band.lowercase(),
+        style = MaterialTheme.typography.labelSmall,
+        color = color,
+        modifier = Modifier
+            .background(color.copy(alpha = 0.14f), RoundedCornerShape(50))
+            .padding(horizontal = 8.dp, vertical = 3.dp)
+    )
+}
+
+/** What the player has spent, overall and per model. */
+@Composable
+private fun UsagePanel(events: List<UsageEntity>) {
+    val total = remember(events) { UsageRecorder.summarise(events) }
+    val byModel = remember(events) { UsageRecorder.byModel(events) }
+    val byPurpose = remember(events) { UsageRecorder.byPurpose(events) }
+
+    Column(Modifier.fillMaxWidth()) {
+        Text("Usage and cost", style = MaterialTheme.typography.headlineMedium, color = NarrateColors.TextPrimary)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Everything Narrate has asked a model to do, across every world. Token counts come from " +
+                "the providers; cost is an estimate against list prices as of ${ModelPricing.AS_OF}.",
+            style = MaterialTheme.typography.bodySmall,
+            color = NarrateColors.TextMuted
+        )
+        Spacer(Modifier.height(12.dp))
+        if (events.isEmpty()) {
+            Text(
+                "Nothing used yet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = NarrateColors.TextMuted
+            )
+            return@Column
+        }
+        UsageTotals(total)
+        Spacer(Modifier.height(14.dp))
+        UsageBreakdown("By model", byModel)
+        Spacer(Modifier.height(10.dp))
+        UsageBreakdown("By activity", byPurpose)
+    }
+}
+
+@Composable
+fun UsageTotals(total: UsageSummary) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        StatChip("Estimated", ModelPricing.money(total.cost))
+        StatChip("Calls", total.calls.toString())
+        StatChip("Tokens", compactNumber(total.totalTokens))
+        if (total.images > 0) StatChip("Images", total.images.toString())
+    }
+    if (total.hasUnpricedCalls) {
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Some calls used models with no price on record, so the real total is higher.",
+            style = MaterialTheme.typography.labelSmall,
+            color = NarrateColors.Gold
+        )
+    }
+}
+
+@Composable
+fun UsageBreakdown(title: String, groups: List<UsageGroup>) {
+    if (groups.isEmpty()) return
+    Text(title, style = MaterialTheme.typography.titleMedium, color = NarrateColors.TextPrimary)
+    Spacer(Modifier.height(6.dp))
+    groups.take(8).forEach { group ->
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    group.label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NarrateColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    listOfNotNull(
+                        group.detail.takeIf { it.isNotBlank() },
+                        "${group.summary.calls} calls",
+                        if (group.summary.totalTokens > 0) "${compactNumber(group.summary.totalTokens)} tokens" else null,
+                        if (group.summary.images > 0) "${group.summary.images} images" else null
+                    ).joinToString(" - "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NarrateColors.TextMuted
+                )
+            }
+            Text(
+                if (group.summary.hasUnpricedCalls && group.summary.cost == 0.0) "unpriced"
+                else ModelPricing.money(group.summary.cost),
+                style = MaterialTheme.typography.bodyMedium,
+                color = NarrateColors.TextSecondary
+            )
+        }
+    }
+}
+
+fun compactNumber(value: Long): String = when {
+    value >= 1_000_000 -> String.format("%.1fM", value / 1_000_000.0)
+    value >= 1_000 -> String.format("%.1fk", value / 1_000.0)
+    else -> value.toString()
 }
 
 @Composable

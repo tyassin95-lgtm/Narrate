@@ -43,8 +43,12 @@ fun RichNarration(
     proseColor: Color = NarrateColors.TextPrimary
 ) {
     val blocks = remember(markup) { MarkupParser.parse(markup) }
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        blocks.forEach { block ->
+    // Long-form prose needs air: paragraphs are set well apart, and an in-world block
+    // (a text message, a letter) gets more still, so it reads as an interruption.
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        blocks.forEachIndexed { index, block ->
+            val previous = blocks.getOrNull(index - 1)
+            if (block is Block.Comm || previous is Block.Comm) Spacer(Modifier.height(6.dp))
             when (block) {
                 is Block.Prose -> Text(
                     text = inlineStyled(block.text),
@@ -61,7 +65,7 @@ fun RichNarration(
 @Composable
 private fun SceneBreak() {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {

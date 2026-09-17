@@ -40,16 +40,19 @@ class XaiProvider(private val baseUrl: String = "https://api.x.ai/v1") : AiProvi
                 .build()
         )
         val root = AppJson.parseToJsonElement(body).jsonObject
-        val text = root["choices"]?.jsonArray?.firstOrNull()
-            ?.jsonObject?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
+        val choice = root["choices"]?.jsonArray?.firstOrNull()?.jsonObject
+        val text = choice?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
             ?: throw ProviderException(id, "No content returned.")
+        val finishReason = choice["finish_reason"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val usage = root["usage"]?.jsonObject
         return LlmResponse(
             text = text,
             model = root["model"]?.jsonPrimitive?.contentOrNull ?: request.model,
             provider = id,
             inputTokens = usage?.get("prompt_tokens")?.jsonPrimitive?.intOrNull ?: 0,
-            outputTokens = usage?.get("completion_tokens")?.jsonPrimitive?.intOrNull ?: 0
+            outputTokens = usage?.get("completion_tokens")?.jsonPrimitive?.intOrNull ?: 0,
+            finishReason = finishReason,
+            truncated = finishReason == "length"
         )
     }
 
@@ -89,19 +92,24 @@ class XaiProvider(private val baseUrl: String = "https://api.x.ai/v1") : AiProvi
                 id,
                 Request.Builder().url("$baseUrl/models").addHeader("Authorization", "Bearer $apiKey").get().build()
             )
-            AppJson.parseToJsonElement(body).jsonObject["data"]?.jsonArray.orEmpty().mapNotNull { element ->
-                val modelId = element.jsonObject["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                val isImage = modelId.contains("image")
-                ModelInfo(modelId, id, supportsText = !isImage, supportsImageGeneration = isImage)
-            }.sortedBy { it.id }
+            val listed = AppJson.parseToJsonElement(body).jsonObject["data"]?.jsonArray.orEmpty()
+                .mapNotNull { element ->
+                    val modelId = element.jsonObject["id"]?.jsonPrimitive?.contentOrNull
+                        ?: return@mapNotNull null
+                    ModelTaxonomy.describe(id, modelId)
+                }
+            ModelTaxonomy.sort(listed).ifEmpty { catalog() }
         }.getOrElse { catalog() }
     }
 
-    override fun catalog(): List<ModelInfo> = listOf(
-        ModelInfo("grok-4", id, "Grok 4", note = "Flagship narration"),
-        ModelInfo("grok-4-fast", id, "Grok 4 Fast", note = "Fast simulation"),
-        ModelInfo("grok-3", id, "Grok 3"),
-        ModelInfo("grok-3-mini", id, "Grok 3 mini"),
-        ModelInfo("grok-2-image-1212", id, "Grok 2 Image", supportsText = false, supportsImageGeneration = true)
+    /** Fallback only, for before a key is entered. The live listing always wins. */
+    override fun catalog(): List<ModelInfo> = ModelTaxonomy.sort(
+        listOfNotNull(
+            ModelTaxonomy.describe(id, "grok-4.6", "Grok 4.6"),
+            ModelTaxonomy.describe(id, "grok-4.5", "Grok 4.5"),
+            ModelTaxonomy.describe(id, "grok-4.3", "Grok 4.3"),
+            ModelTaxonomy.describe(id, "grok-imagine-image-2.0", "Grok Imagine Image 2.0"),
+            ModelTaxonomy.describe(id, "grok-imagine-image", "Grok Imagine Image")
+        )
     )
 }

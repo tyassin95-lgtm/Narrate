@@ -16,7 +16,7 @@ data class AppSettings(
     val simulation: ModelChoice = ModelChoice(ProviderId.OPENAI, ""),
     val image: ModelChoice = ModelChoice(ProviderId.OPENAI, ""),
     val temperature: Float = 0.9f,
-    val maxTokens: Int = 4096,
+    val maxTokens: Int = 8192,
     val recentTurnWindow: Int = 8,
     val memoryRetrievalCount: Int = 24,
     val useReferenceImages: Boolean = true,
@@ -58,7 +58,7 @@ class SettingsStore(context: Context) {
             prefs.getString("image_model", "") ?: ""
         ),
         temperature = prefs.getFloat("temperature", 0.9f),
-        maxTokens = prefs.getInt("max_tokens", 4096),
+        maxTokens = prefs.getInt("max_tokens", 8192),
         recentTurnWindow = prefs.getInt("recent_turns", 8),
         memoryRetrievalCount = prefs.getInt("memory_count", 24),
         useReferenceImages = prefs.getBoolean("use_reference_images", true),

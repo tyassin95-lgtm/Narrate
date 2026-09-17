@@ -183,3 +183,19 @@ interface ContinuityIssueDao {
     suspend fun forTurn(worldId: String, turnIndex: Int): List<ContinuityIssueEntity>
     @Query("DELETE FROM continuity_issues WHERE worldId = :worldId") suspend fun deleteByWorld(worldId: String)
 }
+
+@Dao
+interface UsageDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(usage: UsageEntity)
+
+    @Query("SELECT * FROM usage_events WHERE worldId = :worldId ORDER BY createdAt DESC")
+    fun observeForWorld(worldId: String): Flow<List<UsageEntity>>
+
+    @Query("SELECT * FROM usage_events ORDER BY createdAt DESC LIMIT :limit")
+    fun observeAll(limit: Int = 2000): Flow<List<UsageEntity>>
+
+    @Query("SELECT * FROM usage_events WHERE worldId = :worldId")
+    suspend fun forWorld(worldId: String): List<UsageEntity>
+
+    @Query("DELETE FROM usage_events WHERE worldId = :worldId") suspend fun deleteByWorld(worldId: String)
+}

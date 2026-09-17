@@ -20,15 +20,16 @@ object WorldSimulator {
     data class Tick(val kind: String, val text: String)
 
     fun simulate(snapshot: WorldSnapshot, lastStoryTime: String): List<Tick> {
+        val style = PlayStyle.from(snapshot.world.playStyle)
         val ticks = mutableListOf<Tick>()
         val elapsed = phaseDistance(lastStoryTime, snapshot.world.storyTime) +
             abs(snapshot.world.dayNumber - (parseDay(lastStoryTime) ?: snapshot.world.dayNumber)) * dayPhases.size
 
         ticks += routineTicks(snapshot, elapsed)
-        ticks += threadTicks(snapshot)
-        ticks += relationshipTicks(snapshot)
+        ticks += threadTicks(snapshot, style)
+        ticks += relationshipTicks(snapshot, style)
         ticks += pressureTicks(snapshot)
-        return ticks.take(14)
+        return ticks.take(if (style.quietWorld) 8 else 14)
     }
 
     /** NPCs keep their own schedules, whether or not anyone is watching. */
@@ -49,15 +50,16 @@ object WorldSimulator {
             }
     }
 
-    /** Threads decay into events when the player ignores them. */
-    private fun threadTicks(snapshot: WorldSnapshot): List<Tick> =
+    /** Threads develop on their own, as hard or as softly as the world's style allows. */
+    private fun threadTicks(snapshot: WorldSnapshot, style: PlayStyle): List<Tick> =
         snapshot.threads
             .filter { it.status == "ACTIVE" }
             .sortedByDescending { it.urgency * 10 + (snapshot.world.turnCount - it.updatedTurn) }
-            .take(5)
+            .take(style.maxThreadTicks)
             .map { thread ->
                 val stale = snapshot.world.turnCount - thread.updatedTurn
                 val pressure = when {
+                    style.quietWorld -> "This moves at its own pace in the background. Do not bring it to the player."
                     thread.urgency >= 4 -> "This is urgent and should visibly advance now."
                     stale >= 6 -> "This has been quiet for $stale turns; it should resurface."
                     else -> "This continues in the background."
@@ -69,8 +71,9 @@ object WorldSimulator {
             }
 
     /** People do not sit still emotionally either. */
-    private fun relationshipTicks(snapshot: WorldSnapshot): List<Tick> {
+    private fun relationshipTicks(snapshot: WorldSnapshot, style: PlayStyle): List<Tick> {
         val turn = snapshot.world.turnCount
+        if (style == PlayStyle.SANDBOX) return emptyList()
         return snapshot.npcs
             .filter { it.status == "ALIVE" && abs(it.affinity) >= 40 && turn - it.lastSeenTurn in 3..40 }
             .sortedByDescending { abs(it.affinity) }
@@ -105,12 +108,14 @@ object WorldSimulator {
         return ticks
     }
 
-    fun render(ticks: List<Tick>): String {
+    fun render(ticks: List<Tick>, style: PlayStyle): String {
         if (ticks.isEmpty()) return ""
         return buildString {
             appendLine("## OFFSCREEN WORLD (what has been happening while the player was elsewhere)")
-            appendLine("These are pressures, not scripts. Apply the ones that make sense, ignore the rest, and")
-            appendLine("record whatever you apply in the state block. The player only learns of them through evidence.")
+            appendLine("These are possibilities, not scripts. Apply the ones that make sense, ignore the rest,")
+            appendLine("and record whatever you apply in the state block. The player only learns of them")
+            appendLine("through evidence, never through narration telling them directly.")
+            appendLine(style.simulationPressure)
             ticks.forEach { appendLine("- [${it.kind}] ${it.text}") }
         }
     }

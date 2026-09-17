@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -20,7 +21,12 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.narrate.app.ai.ModelPricing
 import com.narrate.app.data.entity.*
+import com.narrate.app.engine.PlayStyle
+import com.narrate.app.engine.UsageRecorder
+import com.narrate.app.ui.settings.UsageBreakdown
+import com.narrate.app.ui.settings.UsageTotals
 import com.narrate.app.ui.components.*
 import com.narrate.app.ui.theme.NarrateColors
 
@@ -32,6 +38,7 @@ private enum class CodexTab(val label: String) {
     THREADS("Threads"),
     JOURNAL("Journal"),
     MEMORY("Memory"),
+    USAGE("Usage"),
     CONTINUITY("Continuity")
 }
 
@@ -83,13 +90,14 @@ fun CodexScreen(
         Column(Modifier.padding(padding).fillMaxSize()) {
             ErrorBanner(state.message) { viewModel.clearMessage() }
             when (tab) {
-                CodexTab.OVERVIEW -> OverviewTab(state, onCharacter)
+                CodexTab.OVERVIEW -> OverviewTab(state, viewModel, onCharacter)
                 CodexTab.CAST -> CastTab(state, onCharacter)
                 CodexTab.MAP -> MapTab(state, onLocation)
                 CodexTab.OBJECTS -> ObjectsTab(state, viewModel)
                 CodexTab.THREADS -> ThreadsTab(state)
                 CodexTab.JOURNAL -> JournalTab(state)
                 CodexTab.MEMORY -> MemoryTab(state, viewModel)
+                CodexTab.USAGE -> UsageTab(state)
                 CodexTab.CONTINUITY -> ContinuityTab(state)
             }
         }
@@ -97,7 +105,7 @@ fun CodexScreen(
 }
 
 @Composable
-private fun OverviewTab(state: CodexUiState, onCharacter: (String) -> Unit) {
+private fun OverviewTab(state: CodexUiState, viewModel: CodexViewModel, onCharacter: (String) -> Unit) {
     val world = state.world ?: return
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -136,6 +144,20 @@ private fun OverviewTab(state: CodexUiState, onCharacter: (String) -> Unit) {
             }
         }
         item { InfoRow("Story time", world.storyTime) }
+        item {
+            val current = PlayStyle.from(world.playStyle)
+            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                Text("PACING", style = MaterialTheme.typography.labelSmall, color = NarrateColors.Accent)
+                Spacer(Modifier.height(3.dp))
+                Text(current.blurb, style = MaterialTheme.typography.bodyMedium, color = NarrateColors.TextSecondary)
+                Spacer(Modifier.height(8.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(PlayStyle.entries.toList()) { style ->
+                        Pill(style.label, style == current) { viewModel.setPlayStyle(style) }
+                    }
+                }
+            }
+        }
         item { InfoRow("Currently", state.locationName(world.currentLocationId)) }
         item { InfoRow("Tagline", world.tagline) }
         item { InfoRow("Genre", world.genre) }
@@ -568,6 +590,39 @@ private fun MemoryTab(state: CodexUiState, viewModel: CodexViewModel) {
                 item { EmptyState("Nothing remembered yet", "Facts are recorded automatically as the world turns.") }
             }
         }
+    }
+}
+
+/** What this particular world has cost to run. */
+@Composable
+private fun UsageTab(state: CodexUiState) {
+    val total = remember(state.usage) { UsageRecorder.summarise(state.usage) }
+    val byModel = remember(state.usage) { UsageRecorder.byModel(state.usage) }
+    val byPurpose = remember(state.usage) { UsageRecorder.byPurpose(state.usage) }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Text(
+                "What ${state.world?.name.orEmpty()} has used. Cost is estimated against list prices " +
+                    "recorded on ${ModelPricing.AS_OF}; see Settings for the total across every world.",
+                style = MaterialTheme.typography.bodySmall,
+                color = NarrateColors.TextMuted
+            )
+        }
+        if (state.usage.isEmpty()) {
+            item { EmptyState("Nothing used yet", "Usage is recorded from the first turn you play.") }
+            return@LazyColumn
+        }
+        item { UsageTotals(total) }
+        item {
+            val perTurn = if (state.turns.isEmpty()) 0.0 else total.cost / state.turns.size
+            Text(
+                "About ${ModelPricing.money(perTurn)} per turn across ${state.turns.size} turns.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = NarrateColors.TextSecondary
+            )
+        }
+        item { UsageBreakdown("By model", byModel) }
+        item { UsageBreakdown("By activity", byPurpose) }
     }
 }
 
