@@ -364,6 +364,8 @@ private fun LocationNode(
             .padding(10.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Thumbnail(location.name, state.imagePath(location.imageId), size = 38.dp, corner = 6.dp)
+            Spacer(Modifier.width(10.dp))
             Text(
                 location.name,
                 style = MaterialTheme.typography.titleMedium,
@@ -416,9 +418,11 @@ private fun ObjectsTab(state: CodexUiState, viewModel: CodexViewModel) {
                 Modifier
                     .fillMaxWidth()
                     .background(NarrateColors.Surface, RoundedCornerShape(8.dp))
-                    .padding(12.dp),
+                    .padding(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Thumbnail(item.name, state.imagePath(item.imageId), size = 56.dp)
+                Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(item.name, style = MaterialTheme.typography.titleMedium, color = NarrateColors.TextPrimary)
                     Text(

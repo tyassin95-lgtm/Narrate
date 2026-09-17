@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -12,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.narrate.app.engine.CharacterConcept
@@ -51,9 +53,19 @@ fun CreateScreen(
             )
         }
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
+        Column(
+            Modifier
+                .padding(padding)
+                .fillMaxSize()
+                // Without this the on-screen keyboard covers the lower fields, so the player
+                // cannot see what they are typing.
+                .imePadding()
+        ) {
             StepIndicator(state.step)
             ErrorBanner(state.error) { viewModel.dismissError() }
+            if (state.generating && state.step != CreateStep.BUILDING) {
+                GeneratingBar(state, viewModel::cancelGeneration)
+            }
             Column(
                 Modifier
                     .weight(1f)
@@ -65,10 +77,47 @@ fun CreateScreen(
                     CreateStep.WORLD_DETAILS -> WorldDetailsStep(state, viewModel)
                     CreateStep.CHARACTER_DIRECTION -> CharacterDirectionStep(state, viewModel)
                     CreateStep.CHARACTER_DETAILS -> CharacterDetailsStep(state, viewModel)
-                    CreateStep.BUILDING -> BuildingStep(state)
+                    CreateStep.BUILDING -> BuildingStep(state, viewModel)
                 }
-                Spacer(Modifier.height(40.dp))
+                // Room to scroll the last field clear of the keyboard.
+                Spacer(Modifier.height(96.dp))
             }
+        }
+    }
+}
+
+/** A working clock and a way out, for any step that is waiting on a model. */
+@Composable
+private fun GeneratingBar(state: CreateUiState, onCancel: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .background(NarrateColors.Surface, RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(16.dp),
+            strokeWidth = 2.dp,
+            color = NarrateColors.Accent
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                state.buildingStage.ifBlank { "Working..." },
+                style = MaterialTheme.typography.bodyMedium,
+                color = NarrateColors.TextPrimary
+            )
+            Text(
+                elapsedLabel(state.elapsedSeconds) +
+                    if (state.elapsedSeconds >= SLOW_AFTER_SECONDS) " - slower models can take a few minutes" else "",
+                style = MaterialTheme.typography.labelSmall,
+                color = NarrateColors.TextMuted
+            )
+        }
+        TextButton(onClick = onCancel) {
+            Text("Cancel", color = NarrateColors.Accent, style = MaterialTheme.typography.labelSmall)
         }
     }
 }
@@ -326,9 +375,9 @@ private fun CharacterDetailsStep(state: CreateUiState, viewModel: CreateViewMode
 }
 
 @Composable
-private fun BuildingStep(state: CreateUiState) {
+private fun BuildingStep(state: CreateUiState, viewModel: CreateViewModel) {
     Column(
-        Modifier.fillMaxWidth().padding(top = 80.dp),
+        Modifier.fillMaxWidth().padding(top = 72.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         CircularProgressIndicator(color = NarrateColors.Accent)
@@ -345,7 +394,34 @@ private fun BuildingStep(state: CreateUiState) {
             style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
             color = NarrateColors.TextMuted
         )
+        if (state.generating) {
+            Spacer(Modifier.height(20.dp))
+            Text(
+                elapsedLabel(state.elapsedSeconds),
+                style = MaterialTheme.typography.titleMedium,
+                color = NarrateColors.TextSecondary
+            )
+            if (state.elapsedSeconds >= SLOW_AFTER_SECONDS) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Still working. A reasoning model can take several minutes to build a whole world, " +
+                        "and this one will keep going for up to ten.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NarrateColors.Gold,
+                    textAlign = TextAlign.Center
+                )
+            }
+            Spacer(Modifier.height(18.dp))
+            SecondaryButton("Cancel") { viewModel.cancelGeneration() }
+        }
     }
+}
+
+private const val SLOW_AFTER_SECONDS = 45
+
+private fun elapsedLabel(seconds: Int): String = when {
+    seconds < 60 -> "${seconds}s"
+    else -> "${seconds / 60}m ${seconds % 60}s"
 }
 
 /**

@@ -7,6 +7,9 @@ import com.narrate.app.container
 import com.narrate.app.engine.CharacterConcept
 import com.narrate.app.engine.PlayStyle
 import com.narrate.app.engine.WorldConcept
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +30,8 @@ data class CreateUiState(
     val character: CharacterConcept = CharacterConcept(),
     val generating: Boolean = false,
     val buildingStage: String = "",
+    /** Seconds the current generation has been running, so a slow call never looks stuck. */
+    val elapsedSeconds: Int = 0,
     val error: String? = null,
     val createdWorldId: String? = null
 )
@@ -40,6 +45,59 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
     private val container = application.container
     private val _state = MutableStateFlow(CreateUiState())
     val state: StateFlow<CreateUiState> = _state.asStateFlow()
+
+    /** The generation currently in flight, so the player can give up on it. */
+    private var runningJob: Job? = null
+    private var tickerJob: Job? = null
+
+    /**
+     * Runs one generation call with a visible clock and a working cancel.
+     *
+     * A model that takes four minutes is not broken, but a screen that says nothing for four
+     * minutes looks it. The elapsed count and the cancel button are what separate the two.
+     */
+    private fun generate(stage: String, block: suspend () -> Unit) {
+        if (runningJob?.isActive == true) return
+        update { it.copy(generating = true, error = null, buildingStage = stage, elapsedSeconds = 0) }
+        tickerJob = viewModelScope.launch {
+            var seconds = 0
+            while (isActive) {
+                delay(1_000)
+                seconds++
+                update { if (it.generating) it.copy(elapsedSeconds = seconds) else it }
+            }
+        }
+        runningJob = viewModelScope.launch {
+            try {
+                block()
+            } finally {
+                tickerJob?.cancel()
+                update { it.copy(generating = false) }
+            }
+        }
+    }
+
+    /** Abandon a generation that is taking longer than the player is willing to wait. */
+    fun cancelGeneration() {
+        if (runningJob?.isActive != true) return
+        runningJob?.cancel()
+        tickerJob?.cancel()
+        runningJob = null
+        update {
+            it.copy(
+                generating = false,
+                elapsedSeconds = 0,
+                step = if (it.step == CreateStep.BUILDING) CreateStep.CHARACTER_DETAILS else it.step,
+                error = "Generation cancelled."
+            )
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        runningJob?.cancel()
+        tickerJob?.cancel()
+    }
 
     fun setWorldPrompt(value: String) = update { it.copy(worldPrompt = value) }
     fun setPlayStyle(value: PlayStyle) = update { it.copy(playStyle = value) }
@@ -68,13 +126,12 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
      * world, organised into fields. Nothing they wrote is replaced.
      */
     fun useWhatIWroteForWorld() {
-        viewModelScope.launch {
-            update { it.copy(generating = true, error = null) }
+        generate("Shaping your world...") {
             val result = container.worldForge.expandWorld(_state.value.worldPrompt, _state.value.playStyle)
             update { current ->
                 result.fold(
-                    onSuccess = { current.copy(generating = false, world = it, step = CreateStep.WORLD_DETAILS) },
-                    onFailure = { current.copy(generating = false, error = it.message ?: "Could not reach the model.") }
+                    onSuccess = { current.copy(world = it, step = CreateStep.WORLD_DETAILS) },
+                    onFailure = { current.copy(error = it.message ?: "Could not reach the model.") }
                 )
             }
         }
@@ -82,13 +139,12 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
 
     /** The same for the character: expand what they wrote rather than propose someone else. */
     fun useWhatIWroteForCharacter() {
-        viewModelScope.launch {
-            update { it.copy(generating = true, error = null) }
+        generate("Shaping your character...") {
             val result = container.worldForge.expandCharacter(worldEntity(), _state.value.characterPrompt)
             update { current ->
                 result.fold(
-                    onSuccess = { current.copy(generating = false, character = it, step = CreateStep.CHARACTER_DETAILS) },
-                    onFailure = { current.copy(generating = false, error = it.message ?: "Could not reach the model.") }
+                    onSuccess = { current.copy(character = it, step = CreateStep.CHARACTER_DETAILS) },
+                    onFailure = { current.copy(error = it.message ?: "Could not reach the model.") }
                 )
             }
         }
@@ -110,16 +166,15 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun generateWorldConcepts() {
-        viewModelScope.launch {
-            update { it.copy(generating = true, error = null) }
+        generate("Imagining worlds...") {
             val result = container.worldForge.worldConcepts(
                 direction = _state.value.worldPrompt,
                 playStyle = _state.value.playStyle
             )
             update { current ->
                 result.fold(
-                    onSuccess = { current.copy(generating = false, worldConcepts = it) },
-                    onFailure = { current.copy(generating = false, error = it.message ?: "Could not reach the model.") }
+                    onSuccess = { current.copy(worldConcepts = it) },
+                    onFailure = { current.copy(error = it.message ?: "Could not reach the model.") }
                 )
             }
         }
@@ -146,13 +201,12 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun generateCharacterConcepts() {
-        viewModelScope.launch {
-            update { it.copy(generating = true, error = null) }
+        generate("Imagining characters...") {
             val result = container.worldForge.characterConcepts(worldEntity(), _state.value.characterPrompt)
             update { state ->
                 result.fold(
-                    onSuccess = { state.copy(generating = false, characterConcepts = it) },
-                    onFailure = { state.copy(generating = false, error = it.message ?: "Could not reach the model.") }
+                    onSuccess = { state.copy(characterConcepts = it) },
+                    onFailure = { state.copy(error = it.message ?: "Could not reach the model.") }
                 )
             }
         }
@@ -175,16 +229,9 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Builds the world's starting state and writes the save. */
     fun build() {
-        viewModelScope.launch {
+        update { it.copy(step = CreateStep.BUILDING) }
+        generate("Drawing the map...") {
             val current = _state.value
-            update {
-                it.copy(
-                    step = CreateStep.BUILDING,
-                    generating = true,
-                    error = null,
-                    buildingStage = "Drawing the map..."
-                )
-            }
             val build = container.worldForge.buildWorld(
                 concept = current.world,
                 customPrompt = current.worldPrompt,
@@ -194,12 +241,11 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
             if (build.isFailure) {
                 update {
                     it.copy(
-                        generating = false,
                         step = CreateStep.CHARACTER_DETAILS,
                         error = build.exceptionOrNull()?.message ?: "The world could not be built."
                     )
                 }
-                return@launch
+                return@generate
             }
             update { it.copy(buildingStage = "Populating it with people...") }
             val world = runCatching {
@@ -216,10 +262,9 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
             }
             update { state ->
                 world.fold(
-                    onSuccess = { state.copy(generating = false, createdWorldId = it.id, buildingStage = "Ready.") },
+                    onSuccess = { state.copy(createdWorldId = it.id, buildingStage = "Ready.") },
                     onFailure = {
                         state.copy(
-                            generating = false,
                             step = CreateStep.CHARACTER_DETAILS,
                             error = it.message ?: "The world could not be saved."
                         )

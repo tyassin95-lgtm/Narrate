@@ -37,7 +37,10 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
   clothing, injuries, weather and damage evolve.
 - **An album that is part of the world.** Every generated image is saved with a readable label
   ("Elena - Apartment - Night", "Marcus - First Appearance"), its story time, its turn, who is in
-  it and where it happened.
+  it and where it happened - and once a place or an object has been drawn, its picture becomes
+  its icon on the map and in the inventory.
+- **Suggestions you can edit.** Tapping a suggested action loads it into the input box to read,
+  rewrite or discard. Nothing is sent until you press send.
 
 ---
 
@@ -118,7 +121,20 @@ into the model's token ceiling mid-sentence - Narrate does not shrug and show an
   from exactly where it stopped, never rewriting what the player has already read. The first
   reply's state block stays authoritative so nothing is applied twice.
 
-### 7. A world that moves on its own
+### 7. Slow generations, and generations that return nothing
+
+World building on a reasoning model is legitimately slow, and a reasoning model can spend its
+entire response budget thinking and return an empty message - which looks exactly like a hang.
+
+- Every provider now distinguishes "the model wrote nothing" from "the call failed", reports the
+  finish reason, and says what to do about it.
+- Creation retries once with double the budget before giving up, gets its own ten-minute timeout
+  rather than a turn's, and asks reasoning models for low effort on structured JSON.
+- The creation screen shows a running clock, explains itself once a call passes 45 seconds, and
+  has a cancel that actually cancels. A failure returns the player to the step they came from
+  with the reason, instead of a spinner that never ends.
+
+### 8. A world that moves on its own
 
 `WorldSimulator` runs before each turn: NPCs advance along their routines, active threads press
 for their next beat, people who like or hate you act on the time that has passed, and unresolved
@@ -172,7 +188,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 97 tests covering parsing, continuity, canon, cost and persistence
+./gradlew testDebugUnitTest         # 122 tests covering parsing, continuity, canon, imagery, cost and persistence
 ```
 
 Without a keystore the release APK is signed with the debug key so it still installs.
@@ -236,7 +252,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 97 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 122 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
@@ -251,8 +267,13 @@ cost and deleted with its world; model listings drop embeddings and speech model
 year's flagships above a decade of legacy names; prices resolve for dated releases and unknown
 models stay unpriced; and each schema migration keeps an existing save intact.
 
-Two of them exist because of bugs found in the field. One opens Settings after a restart with a
+Several exist because of bugs found in the field. One opens Settings after a restart with a
 key already stored, capturing anything a background coroutine throws, because that is what used
 to terminate the app and a JVM test would otherwise report a false pass. The other runs creation
 against a deliberately disobedient model that renames the character, renames the world and casts
 the player as one of the locals, and asserts the save comes out with the player's own names.
+A third covers image prompting: an item carried from a starting inventory has nothing but a name,
+and the test asserts that name reaches the prompt, that no other object or character leaks into
+it, and that the saved picture becomes the item's icon. A fourth drives world generation against a
+model that returns an empty message, and asserts it is retried with more room and then explained
+rather than left spinning.

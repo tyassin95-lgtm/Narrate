@@ -57,19 +57,23 @@ class GeminiProvider(private val baseUrl: String = "https://generativelanguage.g
                 .url("$baseUrl/models/${request.model}:generateContent")
                 .addHeader("x-goog-api-key", apiKey)
                 .post(Http.json(payload.toString()))
-                .build()
+                .build(),
+            timeoutSeconds = request.timeoutSeconds
         )
         val root = AppJson.parseToJsonElement(body).jsonObject
         val candidate = root["candidates"]?.jsonArray?.firstOrNull()?.jsonObject
+        val usage = root["usageMetadata"]?.jsonObject
         val text = candidate?.get("content")?.jsonObject?.get("parts")?.jsonArray.orEmpty()
             .mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }
             .joinToString("\n")
         if (text.isBlank()) {
             val reason = candidate?.get("finishReason")?.jsonPrimitive?.contentOrNull
                 ?: root["promptFeedback"]?.jsonObject?.get("blockReason")?.jsonPrimitive?.contentOrNull
-            throw ProviderException(id, "No content returned" + (reason?.let { " (finish reason: $it)" } ?: "."))
+            throw EmptyResponseException(
+                id, request.model, reason.orEmpty(),
+                usage?.get("candidatesTokenCount")?.jsonPrimitive?.intOrNull ?: 0
+            )
         }
-        val usage = root["usageMetadata"]?.jsonObject
         val finishReason = candidate?.get("finishReason")?.jsonPrimitive?.contentOrNull.orEmpty()
         return LlmResponse(
             text = text,

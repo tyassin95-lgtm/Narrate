@@ -352,6 +352,38 @@ fun Avatar(name: String, imagePath: String?, size: Dp = 48.dp, modifier: Modifie
     }
 }
 
+/**
+ * A square thumbnail for a world entity: its generated image if one exists, and its own
+ * generated artwork if not, so nothing in the world is ever only a line of text.
+ */
+@Composable
+fun Thumbnail(
+    name: String,
+    imagePath: String?,
+    modifier: Modifier = Modifier,
+    size: Dp = 52.dp,
+    corner: Dp = 8.dp
+) {
+    Box(
+        modifier
+            .size(size)
+            .clip(RoundedCornerShape(corner))
+            .background(NarrateColors.SurfaceHigh),
+        contentAlignment = Alignment.Center
+    ) {
+        if (imagePath != null && File(imagePath).exists()) {
+            AsyncImage(
+                model = File(imagePath),
+                contentDescription = name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            MonogramArt(name, Modifier.fillMaxSize())
+        }
+    }
+}
+
 @Composable
 fun StatChip(label: String, value: String, modifier: Modifier = Modifier) {
     Column(

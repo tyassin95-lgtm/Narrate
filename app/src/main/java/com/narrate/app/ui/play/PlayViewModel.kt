@@ -106,9 +106,26 @@ class PlayViewModel(application: Application, private val worldId: String) : And
         }
     }
 
-    fun chooseOption(choice: Choice) {
-        val text = if (choice.detail.isBlank()) choice.label else "${choice.label} - ${choice.detail}"
-        submit(text, "CHOICE")
+    /**
+     * The full text of a suggestion, as it should appear in the input box for the player to
+     * read, edit or replace. Choices are prompts, not commitments.
+     */
+    fun choiceText(choice: Choice): String =
+        if (choice.detail.isBlank()) choice.label else "${choice.label} - ${choice.detail}"
+
+    /**
+     * How a submission should be recorded.
+     *
+     * A suggestion sent exactly as written is a choice; the moment the player changes a word
+     * of it, it is their own action or their own speech, and the world is told so.
+     */
+    fun kindFor(input: String, pending: Choice?, speaking: Boolean): String {
+        val untouched = pending != null && choiceText(pending).trim() == input.trim()
+        return when {
+            untouched -> "CHOICE"
+            speaking -> "SPEECH"
+            else -> "ACTION"
+        }
     }
 
     private suspend fun runTurn(block: suspend () -> Result<com.narrate.app.engine.TurnResult>) {

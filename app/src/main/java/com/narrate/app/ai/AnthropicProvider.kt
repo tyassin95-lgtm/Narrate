@@ -42,15 +42,21 @@ class AnthropicProvider(private val baseUrl: String = "https://api.anthropic.com
                 .addHeader("anthropic-version", ANTHROPIC_VERSION)
                 .addHeader("content-type", "application/json")
                 .post(Http.json(payload.toString()))
-                .build()
+                .build(),
+            timeoutSeconds = request.timeoutSeconds
         )
         val root = AppJson.parseToJsonElement(body).jsonObject
+        val usage = root["usage"]?.jsonObject
+        val stopReason = root["stop_reason"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val text = root["content"]?.jsonArray.orEmpty()
             .mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }
             .joinToString("\n")
-            .ifBlank { throw ProviderException(id, "No content returned.") }
-        val usage = root["usage"]?.jsonObject
-        val stopReason = root["stop_reason"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        if (text.isBlank()) {
+            throw EmptyResponseException(
+                id, request.model, stopReason,
+                usage?.get("output_tokens")?.jsonPrimitive?.intOrNull ?: 0
+            )
+        }
         return LlmResponse(
             text = text,
             model = root["model"]?.jsonPrimitive?.contentOrNull ?: request.model,

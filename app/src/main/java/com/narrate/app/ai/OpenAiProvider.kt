@@ -16,7 +16,24 @@ class OpenAiProvider(private val baseUrl: String = "https://api.openai.com/v1") 
 
     override val id = ProviderId.OPENAI
 
-    override suspend fun chat(request: LlmRequest, apiKey: String): LlmResponse {
+    override suspend fun chat(request: LlmRequest, apiKey: String): LlmResponse =
+        try {
+            send(request, apiKey, includeReasoningEffort = request.reasoningEffort != null)
+        } catch (e: ProviderException) {
+            // Not every model in the family accepts the parameter. If that is the only
+            // objection, send the same request without it rather than failing the turn.
+            if (request.reasoningEffort != null && e.message?.contains("reasoning_effort") == true) {
+                send(request, apiKey, includeReasoningEffort = false)
+            } else {
+                throw e
+            }
+        }
+
+    private suspend fun send(
+        request: LlmRequest,
+        apiKey: String,
+        includeReasoningEffort: Boolean
+    ): LlmResponse {
         requireKey(apiKey)
         val messages = buildJsonArray {
             if (request.system.isNotBlank()) {
@@ -39,6 +56,9 @@ class OpenAiProvider(private val baseUrl: String = "https://api.openai.com/v1") 
             put("messages", messages)
             if (usesMaxCompletionTokens) {
                 put("max_completion_tokens", request.maxTokens)
+                if (includeReasoningEffort && request.reasoningEffort != null) {
+                    put("reasoning_effort", request.reasoningEffort)
+                }
             } else {
                 put("max_tokens", request.maxTokens)
                 put("temperature", request.temperature)
@@ -50,14 +70,22 @@ class OpenAiProvider(private val baseUrl: String = "https://api.openai.com/v1") 
                 .url("$baseUrl/chat/completions")
                 .addHeader("Authorization", "Bearer $apiKey")
                 .post(Http.json(payload.toString()))
-                .build()
+                .build(),
+            timeoutSeconds = request.timeoutSeconds
         )
         val root = AppJson.parseToJsonElement(body).jsonObject
         val choice = root["choices"]?.jsonArray?.firstOrNull()?.jsonObject
-        val text = choice?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
-            ?: throw ProviderException(id, "No content returned.")
-        val finishReason = choice["finish_reason"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val finishReason = choice?.get("finish_reason")?.jsonPrimitive?.contentOrNull.orEmpty()
         val usage = root["usage"]?.jsonObject
+        val text = choice?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull.orEmpty()
+        if (text.isBlank()) {
+            throw EmptyResponseException(
+                provider = id,
+                model = request.model,
+                finishReason = finishReason,
+                outputTokens = usage?.get("completion_tokens")?.jsonPrimitive?.intOrNull ?: 0
+            )
+        }
         return LlmResponse(
             text = text,
             model = root["model"]?.jsonPrimitive?.contentOrNull ?: request.model,

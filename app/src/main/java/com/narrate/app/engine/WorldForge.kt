@@ -1,7 +1,9 @@
 package com.narrate.app.engine
 
 import com.narrate.app.ai.ChatMessage
+import com.narrate.app.ai.EmptyResponseException
 import com.narrate.app.ai.LlmRequest
+import com.narrate.app.ai.LlmResponse
 import com.narrate.app.ai.ProviderException
 import com.narrate.app.ai.ProviderRegistry
 import com.narrate.app.core.AppJson
@@ -81,16 +83,32 @@ class WorldForge(
         if (!choice.isSet) {
             throw ProviderException(choice.provider, "No narration model selected. Choose one in Settings.")
         }
-        val response = ProviderRegistry.get(choice.provider).chat(
+        val provider = ProviderRegistry.get(choice.provider)
+        val apiKey = settings.apiKey(choice.provider)
+
+        suspend fun attempt(budget: Int): LlmResponse = provider.chat(
             LlmRequest(
                 model = choice.model,
                 system = system,
                 messages = listOf(ChatMessage.user(user)),
-                maxTokens = maxTokens,
-                temperature = temperature
+                maxTokens = budget,
+                temperature = temperature,
+                // Creation is a single long call, so it gets more room than a turn does.
+                timeoutSeconds = CREATION_TIMEOUT_SECONDS,
+                // Structured JSON does not need deep deliberation, and a reasoning model that
+                // spends its whole budget thinking returns an empty message and looks hung.
+                reasoningEffort = "low"
             ),
-            settings.apiKey(choice.provider)
+            apiKey
         )
+
+        val response = try {
+            attempt(maxTokens)
+        } catch (empty: EmptyResponseException) {
+            // The model wrote nothing, usually because reasoning consumed the budget.
+            // One more attempt with real room before giving up on it.
+            attempt((maxTokens * 2).coerceAtMost(MAX_CREATION_TOKENS))
+        }
         usage.recordChat(worldId, -1, UsageRecorder.PURPOSE_CREATION, response, system.length + user.length)
         return response.text
     }
@@ -351,7 +369,7 @@ class WorldForge(
                       "established_facts": [{"text":"","kind":"FACT","importance":4,"subjects":[""]}]
                     }
                 """.trimIndent(),
-                maxTokens = 8000,
+                maxTokens = 12_000,
                 temperature = 0.95
             )
             val json = TurnParser.extractJsonObject(raw)
@@ -599,6 +617,12 @@ class WorldForge(
         val finished = world.copy(playerCharacterId = playerCharacter.id, currentLocationId = startId)
         repo.saveWorld(finished)
         return finished
+    }
+
+    private companion object {
+        /** World building is legitimately slow; it is not the same budget as a turn. */
+        const val CREATION_TIMEOUT_SECONDS = 600
+        const val MAX_CREATION_TOKENS = 32_000
     }
 
     private fun <T> parseList(raw: String, serializer: kotlinx.serialization.KSerializer<T>): List<T> {

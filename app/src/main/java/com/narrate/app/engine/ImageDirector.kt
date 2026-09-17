@@ -120,8 +120,14 @@ class ImageDirector(
                     appendLine("A portrait of a single person from the world of ${world.name}.")
                     appendLine("Art direction: $style. Genre: ${world.genre}. Mood: ${world.tone}.")
                     appendLine()
-                    appendLine("WHO THIS IS (their appearance is fixed and must be reproduced exactly):")
-                    appendLine(identity?.canonicalDescription?.ifBlank { character.appearance } ?: character.appearance)
+                    appendSubject(
+                        heading = "WHO THIS IS",
+                        name = listOf(character.name, character.role.takeIf { it.isNotBlank() })
+                            .filterNotNull()
+                            .joinToString(", "),
+                        described = established(identity?.canonicalDescription, character.appearance),
+                        noun = "person"
+                    )
                     if (character.outfit.isNotBlank()) appendLine("Currently wearing: ${character.outfit}")
                     if (character.physicalState.isNotBlank()) appendLine("Current condition: ${character.physicalState}")
                     if (identity?.currentVariant?.isNotBlank() == true) appendLine("Recent change: ${identity.currentVariant}")
@@ -161,8 +167,12 @@ class ImageDirector(
                     appendLine("An establishing view of a place in the world of ${world.name}. No people in frame unless unavoidable.")
                     appendLine("Art direction: $style. Genre: ${world.genre}. Mood: ${world.tone}.")
                     appendLine()
-                    appendLine("THE PLACE (its architecture and layout are established and must be preserved):")
-                    appendLine(identity?.canonicalDescription?.ifBlank { location.description } ?: location.description)
+                    appendSubject(
+                        heading = "THE PLACE",
+                        name = "${location.name} (${location.type.lowercase()})",
+                        described = established(identity?.canonicalDescription, location.description),
+                        noun = "place"
+                    )
                     if (location.atmosphere.isNotBlank()) appendLine("Atmosphere: ${location.atmosphere}")
                     if (location.notableFeatures.isNotBlank()) appendLine("Must include: ${location.notableFeatures}")
                     if (location.currentState.isNotBlank()) appendLine("Its current condition: ${location.currentState}")
@@ -188,12 +198,31 @@ class ImageDirector(
                 val item = snapshot.items.firstOrNull { it.id == subject.itemId }
                     ?: throw IllegalStateException("That object is no longer in this world.")
                 val identity = repo.visualForSubject(item.id)
+                val holder = snapshot.characterById(item.holderId)
+                val place = snapshot.locationById(item.locationId)
+                    ?: snapshot.locationById(holder?.currentLocationId)
                 val prompt = buildString {
-                    appendLine("A close study of a single object from the world of ${world.name}.")
+                    appendLine("A close study of a single object from the world of ${world.name}: ${item.name}.")
                     appendLine("Art direction: $style. Genre: ${world.genre}.")
-                    appendLine("THE OBJECT: ${item.appearance.ifBlank { item.description }}")
+                    appendLine()
+                    appendSubject(
+                        heading = "THE OBJECT",
+                        name = item.name,
+                        described = established(identity?.canonicalDescription, item.appearance, item.description),
+                        noun = "an object"
+                    )
                     if (item.state.isNotBlank()) appendLine("Its current condition: ${item.state}")
-                    if (item.significance.isNotBlank()) appendLine("It matters because: ${item.significance.truncate(200)}")
+                    if (identity?.currentVariant?.isNotBlank() == true) {
+                        appendLine("Recent change to it: ${identity.currentVariant}")
+                    }
+                    if (item.significance.isNotBlank()) {
+                        appendLine("It matters because: ${item.significance.truncate(200)}")
+                    }
+                    holder?.let {
+                        appendLine("It is carried by ${if (it.isPlayer) "the player" else it.name}.")
+                    }
+                    place?.let { appendLine("It is currently at ${it.name}.") }
+                    appendLine("Show this object and nothing else. It fills the frame.")
                     if (extraDirection.isNotBlank()) appendLine("Additional direction: $extraDirection")
                     appendReferenceNote(identity)
                     appendLine("No text, captions, watermarks or borders in the image.")
@@ -205,7 +234,8 @@ class ImageDirector(
                     type = "ITEM",
                     subjectIds = listOf(item.id),
                     subjectNames = listOf(item.name),
-                    locationName = snapshot.locationName(item.locationId),
+                    // A carried object has no location of its own; it is wherever its owner is.
+                    locationName = place?.name.orEmpty(),
                     referenceImageIds = identity?.let { referenceIdsOf(it) }.orEmpty(),
                     size = "1024x1024"
                 )
@@ -238,7 +268,10 @@ class ImageDirector(
                     appendLine("WHEN: ${world.storyTime}.")
                     if (player != null) {
                         appendLine()
-                        appendLine("THE PROTAGONIST (appearance fixed - reproduce exactly): ${player.appearance}")
+                        appendLine(
+                            "THE PROTAGONIST - ${player.name} (appearance fixed - reproduce exactly): " +
+                                player.appearance.ifBlank { "no description on record; keep them plausible and consistent" }
+                        )
                         if (player.outfit.isNotBlank()) appendLine("Wearing: ${player.outfit}")
                         if (player.physicalState.isNotBlank()) appendLine("Condition: ${player.physicalState}")
                         repo.visualForSubject(player.id)?.let { identities += it }
@@ -247,7 +280,10 @@ class ImageDirector(
                     }
                     present.forEach { npc ->
                         appendLine()
-                        appendLine("ALSO PRESENT - ${npc.name} (appearance fixed - reproduce exactly): ${npc.appearance}")
+                        appendLine(
+                            "ALSO PRESENT - ${npc.name} (appearance fixed - reproduce exactly): " +
+                                npc.appearance.ifBlank { "no description on record; keep them plausible and consistent" }
+                        )
                         if (npc.outfit.isNotBlank()) appendLine("Wearing: ${npc.outfit}")
                         if (npc.physicalState.isNotBlank()) appendLine("Condition: ${npc.physicalState}")
                         repo.visualForSubject(npc.id)?.let { identities += it }
@@ -288,6 +324,36 @@ class ImageDirector(
             }
         }
     }
+
+    /**
+     * Names the subject, then describes it.
+     *
+     * Leading with the description alone was how an image of a hospital ID badge came back as
+     * a leather satchel: an item created from a starting inventory has nothing but a name, so
+     * the subject block was empty and the model filled the silence with whatever suited the
+     * genre. The name is the one thing always on record, so it always goes in.
+     */
+    private fun StringBuilder.appendSubject(
+        heading: String,
+        name: String,
+        described: String?,
+        noun: String
+    ) {
+        appendLine("$heading: $name")
+        if (!described.isNullOrBlank()) {
+            appendLine("Its established description, which must be reproduced exactly: $described")
+        } else {
+            appendLine(
+                "No description has been recorded for it yet. Depict exactly what a $noun called " +
+                    "\"$name\" plainly is, as it would appear in this world. Do not substitute a " +
+                    "different subject, and do not invent an elaborate one."
+            )
+        }
+    }
+
+    /** The description on record for a subject, or null when nothing has been written down. */
+    private fun established(vararg candidates: String?): String? =
+        candidates.firstOrNull { !it.isNullOrBlank() }
 
     private fun StringBuilder.appendReferenceNote(identity: VisualIdentityEntity?) {
         if (identity?.primaryImageId != null) {

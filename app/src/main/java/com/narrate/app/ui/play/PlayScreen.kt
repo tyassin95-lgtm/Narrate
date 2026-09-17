@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
@@ -29,6 +30,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
@@ -65,8 +68,14 @@ fun PlayScreen(
     val issues by viewModel.lastIssues.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
+    var speaking by remember { mutableStateOf(false) }
+    // The suggestion currently sitting in the box, so an unedited one is still recorded as a
+    // choice while anything the player changes counts as their own words.
+    var pendingChoice by remember { mutableStateOf<Choice?>(null) }
+    var suggestionsOpen by remember { mutableStateOf(true) }
     var showImageSheet by remember { mutableStateOf(false) }
     var showIssues by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) { viewModel.ensureOpening() }
     LaunchedEffect(state.turns.size, state.loading) {
@@ -127,17 +136,37 @@ fun PlayScreen(
             )
 
             AnimatedVisibility(visible = state.currentChoices.isNotEmpty() && !state.loading) {
-                ChoiceStrip(state.currentChoices) { viewModel.chooseOption(it) }
+                SuggestedActions(
+                    choices = state.currentChoices,
+                    expanded = suggestionsOpen,
+                    onToggle = { suggestionsOpen = !suggestionsOpen },
+                    onChoose = { choice ->
+                        // Load it for editing rather than sending it. The player decides.
+                        input = viewModel.choiceText(choice)
+                        pendingChoice = choice
+                        speaking = choice.kind == "SPEECH"
+                        runCatching { focusRequester.requestFocus() }
+                    }
+                )
             }
 
             InputBar(
                 value = input,
-                onValueChange = { input = it },
+                onValueChange = {
+                    input = it
+                    if (pendingChoice != null && it != viewModel.choiceText(pendingChoice!!)) {
+                        pendingChoice = null
+                    }
+                },
+                speaking = speaking,
+                onSpeakingChange = { speaking = it },
                 enabled = !state.loading,
                 generatingImage = state.generatingImage,
-                onSend = { kind ->
-                    viewModel.submit(input, kind)
+                focusRequester = focusRequester,
+                onSend = {
+                    viewModel.submit(input, viewModel.kindFor(input, pendingChoice, speaking))
                     input = ""
+                    pendingChoice = null
                 },
                 onImage = { showImageSheet = true }
             )
@@ -368,50 +397,102 @@ private fun PresenceBar(
     }
 }
 
+/**
+ * The suggestions for this turn.
+ *
+ * Tapping one writes it into the input box instead of sending it, so the player can read the
+ * whole thing, rewrite as much of it as they like, and send when they mean to. Long options
+ * are clamped here and shown in full once they are in the box.
+ */
 @Composable
-private fun ChoiceStrip(choices: List<Choice>, onChoose: (Choice) -> Unit) {
-    LazyRow(
-        Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        contentPadding = PaddingValues(horizontal = 14.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items(choices) { choice ->
-            Column(
-                Modifier
-                    .width(210.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(NarrateColors.SurfaceElevated)
-                    .border(1.dp, NarrateColors.Divider, RoundedCornerShape(8.dp))
-                    .clickable { onChoose(choice) }
-                    .padding(12.dp)
-            ) {
-                Text(
-                    choice.kind,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = when (choice.kind) {
-                        "SPEECH" -> NarrateColors.Gold
-                        "OBSERVE" -> NarrateColors.SystemAccent
-                        else -> NarrateColors.Accent
+private fun SuggestedActions(
+    choices: List<Choice>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onChoose: (Choice) -> Unit
+) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .clickable(onClick = onToggle)
+                .padding(vertical = 6.dp, horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "SUGGESTED ACTIONS - ${choices.size}",
+                style = MaterialTheme.typography.labelSmall,
+                color = NarrateColors.TextMuted,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                if (expanded) "HIDE" else "SHOW",
+                style = MaterialTheme.typography.labelSmall,
+                color = NarrateColors.Accent
+            )
+        }
+        AnimatedVisibility(visible = expanded) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                choices.forEach { choice ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(NarrateColors.SurfaceElevated)
+                            .border(1.dp, NarrateColors.Divider, RoundedCornerShape(8.dp))
+                            .clickable { onChoose(choice) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Box(
+                            Modifier
+                                .padding(top = 5.dp)
+                                .size(6.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(
+                                    when (choice.kind) {
+                                        "SPEECH" -> NarrateColors.Gold
+                                        "OBSERVE" -> NarrateColors.SystemAccent
+                                        else -> NarrateColors.Accent
+                                    }
+                                )
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                choice.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = NarrateColors.TextPrimary,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (choice.detail.isNotBlank()) {
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    choice.detail,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = NarrateColors.TextMuted,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            Icons.Default.Edit,
+                            "Put this in the box to edit",
+                            tint = NarrateColors.TextMuted,
+                            modifier = Modifier.size(15.dp).padding(top = 2.dp)
+                        )
                     }
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    choice.label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = NarrateColors.TextPrimary,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (choice.detail.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        choice.detail,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = NarrateColors.TextMuted,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
                 }
+                Text(
+                    "Tap one to load it for editing. Nothing is sent until you press send.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NarrateColors.TextMuted,
+                    modifier = Modifier.padding(top = 2.dp, start = 4.dp, bottom = 2.dp)
+                )
             }
         }
     }
@@ -421,12 +502,14 @@ private fun ChoiceStrip(choices: List<Choice>, onChoose: (Choice) -> Unit) {
 private fun InputBar(
     value: String,
     onValueChange: (String) -> Unit,
+    speaking: Boolean,
+    onSpeakingChange: (Boolean) -> Unit,
     enabled: Boolean,
     generatingImage: Boolean,
-    onSend: (String) -> Unit,
+    focusRequester: FocusRequester,
+    onSend: () -> Unit,
     onImage: () -> Unit
 ) {
-    var speaking by remember { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -435,9 +518,9 @@ private fun InputBar(
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ModeToggle("ACT", !speaking) { speaking = false }
+            ModeToggle("ACT", !speaking) { onSpeakingChange(false) }
             Spacer(Modifier.width(6.dp))
-            ModeToggle("SPEAK", speaking) { speaking = true }
+            ModeToggle("SPEAK", speaking) { onSpeakingChange(true) }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = onImage, enabled = !generatingImage) {
                 if (generatingImage) {
@@ -451,7 +534,7 @@ private fun InputBar(
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).focusRequester(focusRequester),
                 placeholder = {
                     Text(
                         if (speaking) "Say anything..." else "Do anything...",
@@ -459,12 +542,12 @@ private fun InputBar(
                         style = MaterialTheme.typography.bodyMedium
                     )
                 },
-                maxLines = 5,
+                maxLines = 8,
                 enabled = enabled,
                 shape = RoundedCornerShape(22.dp),
                 textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-                keyboardActions = KeyboardActions(onSend = { onSend(if (speaking) "SPEECH" else "ACTION") }),
+                keyboardActions = KeyboardActions(onSend = { onSend() }),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = NarrateColors.Accent,
                     unfocusedBorderColor = NarrateColors.Divider,
@@ -477,7 +560,7 @@ private fun InputBar(
             )
             Spacer(Modifier.width(8.dp))
             FilledIconButton(
-                onClick = { onSend(if (speaking) "SPEECH" else "ACTION") },
+                onClick = { onSend() },
                 enabled = enabled && value.isNotBlank(),
                 modifier = Modifier.size(48.dp),
                 colors = IconButtonDefaults.filledIconButtonColors(

@@ -15,13 +15,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.narrate.app.data.entity.LocationEntity
 import com.narrate.app.ui.theme.NarrateColors
+import java.io.File
 
 private const val NODE_WIDTH = 132
 private const val NODE_HEIGHT = 62
@@ -115,11 +121,14 @@ private fun MapNode(
 ) {
     val isHere = state.world?.currentLocationId == location.id
     val occupants = state.characters.filter { it.currentLocationId == location.id && it.status == "ALIVE" }
-    Column(
+    val imagePath = state.imagePath(location.imageId)
+    val hasImage = imagePath != null && File(imagePath).exists()
+
+    Box(
         modifier
+            .clip(RoundedCornerShape(6.dp))
             .background(
-                if (isHere) NarrateColors.Accent.copy(alpha = 0.18f) else NarrateColors.Surface,
-                RoundedCornerShape(6.dp)
+                if (isHere) NarrateColors.Accent.copy(alpha = 0.18f) else NarrateColors.Surface
             )
             .border(
                 1.dp,
@@ -128,29 +137,51 @@ private fun MapNode(
                 RoundedCornerShape(6.dp)
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
-        Text(
-            location.name,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (location.discovered) NarrateColors.TextPrimary else NarrateColors.TextMuted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            location.type.lowercase(),
-            style = MaterialTheme.typography.labelSmall,
-            color = NarrateColors.TextMuted,
-            maxLines = 1
-        )
-        if (occupants.isNotEmpty()) {
+        // A place that has been drawn shows itself, dimmed enough to keep the label legible.
+        if (hasImage) {
+            AsyncImage(
+                model = File(imagePath!!),
+                contentDescription = location.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize()
+            )
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Black.copy(alpha = 0.45f),
+                                Color.Black.copy(alpha = 0.82f)
+                            )
+                        )
+                    )
+            )
+        }
+        Column(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp)) {
             Text(
-                occupants.joinToString(", ") { if (it.isPlayer) "you" else it.name.split(' ').first() },
-                style = MaterialTheme.typography.labelSmall,
-                color = if (isHere) NarrateColors.Accent else NarrateColors.TextSecondary,
+                location.name,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (location.discovered) NarrateColors.TextPrimary else NarrateColors.TextMuted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            Text(
+                location.type.lowercase(),
+                style = MaterialTheme.typography.labelSmall,
+                color = NarrateColors.TextMuted,
+                maxLines = 1
+            )
+            if (occupants.isNotEmpty()) {
+                Text(
+                    occupants.joinToString(", ") { if (it.isPlayer) "you" else it.name.split(' ').first() },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isHere) NarrateColors.Accent else NarrateColors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }

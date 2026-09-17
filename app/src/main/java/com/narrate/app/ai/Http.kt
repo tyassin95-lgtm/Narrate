@@ -27,11 +27,24 @@ object Http {
 
     fun json(body: String): RequestBody = body.toRequestBody(JSON)
 
-    suspend fun execute(provider: ProviderId, request: Request): String = withContext(Dispatchers.IO) {
+    /** A client with a different call timeout, sharing this one's connection pool. */
+    private fun clientFor(timeoutSeconds: Int?): OkHttpClient = when (timeoutSeconds) {
+        null -> client
+        else -> client.newBuilder()
+            .callTimeout(timeoutSeconds.toLong(), TimeUnit.SECONDS)
+            .readTimeout(timeoutSeconds.toLong(), TimeUnit.SECONDS)
+            .build()
+    }
+
+    suspend fun execute(
+        provider: ProviderId,
+        request: Request,
+        timeoutSeconds: Int? = null
+    ): String = withContext(Dispatchers.IO) {
         val response: Response = try {
-            client.newCall(request).execute()
+            clientFor(timeoutSeconds).newCall(request).execute()
         } catch (t: Throwable) {
-            throw ProviderException(provider, "Network error: ${t.message ?: t::class.simpleName}", t)
+            throw ProviderException(provider, describeNetworkFailure(t, timeoutSeconds), t)
         }
         response.use {
             val body = it.body?.string().orEmpty()
@@ -57,6 +70,18 @@ object Http {
                 bytes to (it.body?.contentType()?.toString() ?: "image/png")
             }
         }
+
+    /** Says plainly when a call ran out of time rather than failing outright. */
+    private fun describeNetworkFailure(t: Throwable, timeoutSeconds: Int?): String {
+        val timedOut = t is java.net.SocketTimeoutException ||
+            t is java.io.InterruptedIOException ||
+            t.message?.contains("timeout", ignoreCase = true) == true
+        if (!timedOut) return "Network error: ${t.message ?: t::class.simpleName}"
+        val limit = timeoutSeconds ?: 360
+        return "The request took longer than ${limit / 60} minutes and was given up on. " +
+            "The model may be overloaded, or this may be a slow reasoning model - try again, " +
+            "or choose a faster model in Settings."
+    }
 
     /** Pull the human-readable message out of the many shapes of vendor error JSON. */
     private fun extractError(body: String): String {

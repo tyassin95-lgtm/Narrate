@@ -37,14 +37,20 @@ class XaiProvider(private val baseUrl: String = "https://api.x.ai/v1") : AiProvi
                 .url("$baseUrl/chat/completions")
                 .addHeader("Authorization", "Bearer $apiKey")
                 .post(Http.json(payload.toString()))
-                .build()
+                .build(),
+            timeoutSeconds = request.timeoutSeconds
         )
         val root = AppJson.parseToJsonElement(body).jsonObject
         val choice = root["choices"]?.jsonArray?.firstOrNull()?.jsonObject
-        val text = choice?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
-            ?: throw ProviderException(id, "No content returned.")
-        val finishReason = choice["finish_reason"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val finishReason = choice?.get("finish_reason")?.jsonPrimitive?.contentOrNull.orEmpty()
         val usage = root["usage"]?.jsonObject
+        val text = choice?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull.orEmpty()
+        if (text.isBlank()) {
+            throw EmptyResponseException(
+                id, request.model, finishReason,
+                usage?.get("completion_tokens")?.jsonPrimitive?.intOrNull ?: 0
+            )
+        }
         return LlmResponse(
             text = text,
             model = root["model"]?.jsonPrimitive?.contentOrNull ?: request.model,

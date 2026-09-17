@@ -36,7 +36,17 @@ data class LlmRequest(
     val messages: List<ChatMessage>,
     val maxTokens: Int = 4096,
     val temperature: Double = 0.9,
-    val stopSequences: List<String> = emptyList()
+    val stopSequences: List<String> = emptyList(),
+    /**
+     * How long to allow this one call. World building is legitimately slow on a reasoning
+     * model, so it is given more room than a turn rather than the whole app waiting longer.
+     */
+    val timeoutSeconds: Int? = null,
+    /**
+     * Passed to reasoning models that accept it. Structured JSON work does not need deep
+     * deliberation, and a model that spends its whole budget thinking returns nothing at all.
+     */
+    val reasoningEffort: String? = null
 )
 
 data class LlmResponse(
@@ -82,6 +92,36 @@ data class ImageResult(
 
 class ProviderException(val provider: ProviderId, message: String, cause: Throwable? = null) :
     Exception("${provider.displayName}: $message", cause)
+
+/**
+ * The call succeeded but the model wrote nothing.
+ *
+ * Reasoning models can spend an entire response budget on hidden reasoning and return an
+ * empty message, which looks identical to a hang from the outside. Distinguishing it lets
+ * the caller retry with more room and explain itself if that still fails.
+ */
+class EmptyResponseException(
+    val provider: ProviderId,
+    val model: String,
+    val finishReason: String,
+    val outputTokens: Int
+) : Exception(
+    buildString {
+        append("${provider.displayName}: $model returned no text")
+        if (finishReason.isNotBlank()) append(" (finish reason: $finishReason)")
+        append(". ")
+        if (finishReason.equals("length", true) || finishReason.equals("max_tokens", true) ||
+            finishReason.equals("MAX_TOKENS", true)
+        ) {
+            append(
+                "Reasoning models can use the whole response budget before writing anything. " +
+                    "Raise the response length limit in Settings, or pick a model that reasons less."
+            )
+        } else {
+            append("Try again, or choose a different model in Settings.")
+        }
+    }
+)
 
 /**
  * Every provider implements the same shape so the rest of the app never branches on vendor.
