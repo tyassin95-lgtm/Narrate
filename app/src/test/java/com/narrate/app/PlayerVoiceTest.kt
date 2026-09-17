@@ -153,6 +153,48 @@ class PlayerVoiceTest {
     }
 
     @Test
+    fun `a turn that ends by asking his name is caught as the character saying nothing`() {
+        // Straight from the report: Liv introduces herself, asks his name, and the turn stops
+        // so the player can type "Adrian".
+        val narration = """
+            "I'm Liv, by the way." Her fingers touch the silver chain at her throat.
+            "What's your name?"
+        """.trimIndent()
+
+        assertEquals(listOf("What's your name?"), PlayerVoice.unanswered(narration, snapshot()))
+    }
+
+    @Test
+    fun `nothing is flagged when he actually answered`() {
+        val narration = """
+            "I'm Liv, by the way. What's your name?"
+
+            "Adrian." He shifts the bag to his other shoulder. "Adrian Voss."
+        """.trimIndent()
+
+        assertTrue(PlayerVoice.unanswered(narration, snapshot()).isEmpty())
+    }
+
+    @Test
+    fun `a question that is the player's is allowed to end the turn`() {
+        val narration = "\"Would you come up for a coffee?\" She is already looking for her key."
+        assertTrue(
+            "leaving a decision open is the whole point",
+            PlayerVoice.unanswered(narration, snapshot()).isEmpty()
+        )
+    }
+
+    @Test
+    fun `the craft rules put him in the conversation rather than beside it`() {
+        val prompt = Prompts.gameMaster(WorldEntity(name = "Eastgate"))
+        assertTrue(prompt.contains("IS IN THE CONVERSATION, NOT WATCHING IT"))
+        assertTrue(prompt.contains("a monologue with a witness"))
+        assertTrue(prompt.contains("same scene it was asked, not next turn"))
+        assertTrue(prompt.contains("never their own name"))
+        assertTrue(prompt.contains("Ending on"))
+    }
+
+    @Test
     fun `the law itself draws the line between a decision and a line of dialogue`() {
         val prompt = Prompts.gameMaster(WorldEntity(name = "Eastgate"))
         assertTrue(prompt.contains("THEIR CHARACTER IS A PERSON"))

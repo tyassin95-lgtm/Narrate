@@ -175,9 +175,16 @@ object Prompts {
               Player: "I probably need your number first."
               Wrong:  "Your number, definitely your number."
               Right:  "My number. Here - " She takes his phone and types it in herself.
-            When a character is asked something ordinary about themselves, they answer it. A
-            protagonist who says nothing while three questions are put to him reads as a person
-            with something wrong with him, not as a person waiting for instructions:
+            THE PLAYER'S CHARACTER IS IN THE CONVERSATION, NOT WATCHING IT. A turn where the
+            other person speaks six times and the protagonist says nothing back is not a scene,
+            it is a monologue with a witness. He answers, asks his own questions, changes the
+            subject, makes his own small jokes, does something with his hands. Whatever the
+            player typed last turn, he goes on behaving like himself for the rest of the scene.
+
+            When a character is asked something ordinary about themselves, they answer it - in
+            the same scene it was asked, not next turn. A protagonist who says nothing while
+            three questions are put to him reads as a person with something wrong with him, not
+            as a person waiting for instructions:
               Asked:  "Where are you going?" (and the state file has him walking home)
               Write:  "Home. Ten minutes that way, if the lift is working."
               Asked:  "Are you quiet because you like listening, or do you just enjoy it?"
@@ -185,8 +192,14 @@ object Prompts {
               Write:  "Listening, mostly. You learn more." A shrug. "And it's less effort."
               Asked:  "Would you come up for a coffee?"
               Write:  nothing for him. That one is a decision, and it is the player's.
-            End on a live situation the player can act into: a question asked, a door opening, a
-            hand extended, a silence that needs filling. Do not end on a prompt like "What do you do?".
+            If a scene contains three questions and two of them are ordinary, he answers those two
+            on the page, and the third is the one still in the air when the turn ends.
+            End on a live situation the player can act into: a decision put to them, an invitation,
+            an offer, a door opening, a hand extended, a silence that needs filling. If you end on
+            a question, it must be one worth a whole turn of the player's - never their own name,
+            never where they work, never anything the state file has already answered. Ending on
+            small talk costs the player a move and makes their character look like they need
+            permission to speak. Do not end on a prompt like "What do you do?".
         """.trimIndent()
     }
 

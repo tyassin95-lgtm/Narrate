@@ -540,6 +540,39 @@ class TurnPipelineTest {
     }
 
     @Test
+    fun `a turn that leaves the character mute is corrected on the next one`() = runBlocking {
+        // The scene from the report: she introduces herself, asks his name, and the turn stops.
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            She studies him with tired, bright curiosity.
+
+            "I'm Liv, by the way." Her fingers touch the chain at her throat. "What's your name?"
+            ===CHOICES===
+            - Tell her
+            - Say nothing
+            ===STATE===
+            {"story_time": "Day 1, 2:40 AM"}
+            ===END===
+            """.trimIndent()
+        )
+        director.take(worldId, "Walk with her", "ACTION")
+
+        val issues = repo.issueDao.forTurn(worldId, 0)
+        val mute = issues.single { it.category == "player-voice" }
+        assertTrue(mute.description.contains("What's your name?"))
+        assertTrue(mute.resolution.contains("answers ordinary questions about himself"))
+
+        scripted.prompts.clear()
+        scripted.enqueue(minimalResponse("Day 1, 2:41 AM"))
+        director.take(worldId, "Keep walking", "ACTION")
+
+        val prompt = scripted.prompts.first()
+        assertTrue("the correction has to reach the next turn", prompt.contains("CONTINUITY CORRECTIONS"))
+        assertTrue(prompt.contains("said nothing"))
+    }
+
+    @Test
     fun `the narrator is told to write dialogue out rather than describe it`() = runBlocking {
         scripted.enqueue(minimalResponse("Day 1, noon"))
         director.take(worldId, "Look around", "ACTION")

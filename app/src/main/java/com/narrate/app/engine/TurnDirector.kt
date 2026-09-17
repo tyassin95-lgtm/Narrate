@@ -147,6 +147,27 @@ class TurnDirector(
             )
         }
 
+        // A turn that ended by asking the player his own name left the character mute. The
+        // narrator hears about it on the next turn, the same way it hears about a teleport.
+        val mute = PlayerVoice.unanswered(parsed.narration, snapshot)
+        if (mute.isNotEmpty()) {
+            val who = snapshot.player?.name ?: "The player character"
+            repo.saveIssues(
+                ContinuityGuard.Report().apply {
+                    mute.forEach { question ->
+                        add(
+                            ContinuityGuard.SEVERITY_WARNING,
+                            "player-voice",
+                            "$who was asked \"$question\" and said nothing, though the answer is " +
+                                "already established about him.",
+                            "He answers ordinary questions about himself in the same scene they are " +
+                                "asked. Only a question that decides something waits for the player."
+                        )
+                    }
+                }.toEntities(worldId, turnIndex)
+            )
+        }
+
         val turn = TurnEntity(
             id = newId(),
             worldId = worldId,

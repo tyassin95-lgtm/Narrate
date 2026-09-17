@@ -53,6 +53,10 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
   written down - where they are going, what they do, why they are so quiet - they answer it
   themselves, in their own voice. Every decision, secret, feeling and commitment stays yours,
   and anything the app cannot confidently place is left for you.
+- **The scene is between two people.** A turn where the other person speaks six times and
+  your character says nothing is a monologue with a witness, so ordinary questions get
+  answered in the same scene they are asked, and a turn never ends on small talk. When a turn
+  does leave your character mute, the app notices and says so to the narrator on the next one.
 - **Who is in the room is not who is in the conversation.** The people you came with are the
   scene; the waiter takes the order and goes. Other people still interrupt, overhear and
   arrive - when the situation gives them a reason to.
@@ -229,7 +233,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 275 tests covering parsing, continuity, canon, imagery, cost and persistence
+./gradlew testDebugUnitTest         # 284 tests covering parsing, continuity, canon, imagery, cost and persistence
 ```
 
 Keep the keystore. Android identifies an app by its signing key, so a release built with a
@@ -296,7 +300,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 275 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 284 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
@@ -335,6 +339,13 @@ that merely retells it is dropped rather than left waiting for a scene the playe
 A tenth covers creation completeness: a reply cut off mid-object keeps the fields that arrived,
 the fields the model dropped are asked for on their own and merged in, and nothing already
 written — least of all anything the player wrote — is overwritten by that top-up.
+
+The playthrough after that found two more. New worlds were opening with eight people standing
+on the same pavement as the player: characters were placed by exact string match against the
+map, and every name that did not match landed on the player's own starting spot - so placement
+now resolves names the way the game does, writes down a place the builder named but never
+declared, and caps the opening scene at the couple of people the scene itself puts there. The
+second is the protagonist's share of the conversation, above.
 
 Another playthrough produced two more, both about how a scene feels rather than what it
 records. One covers the protagonist's own voice: the questions from the report - "Where are

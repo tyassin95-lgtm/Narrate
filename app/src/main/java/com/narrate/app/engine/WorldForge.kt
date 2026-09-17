@@ -457,6 +457,12 @@ class WorldForge(
                     it happens. Do not turn it into a thread - a thread is something still to come, and
                     this has already begun. Do not invent a different starting point.
 
+                    At most two characters are in that opening scene with the player, and only if
+                    the scene itself puts them there. A world does not begin with eight people
+                    standing on the same pavement. Everyone else is somewhere in their own life -
+                    at work, asleep, across town - and each one's "location" must be the exact name
+                    of a place you defined in "locations".
+
                     THE PROTAGONIST - this person already exists and is the player. Never rename them,
                     never create another character with their name, and never cast them as an NPC.
                     ${character.name}, ${character.role}. ${character.summary}
@@ -672,6 +678,32 @@ class WorldForge(
             )
         }
 
+        // Where the builder puts people, resolved the same way the game resolves places later.
+        // An exact string lookup misses "the Gallery" against "The Gallery" and misses anywhere
+        // it named without declaring - and every miss used to land on the player's own doorstep.
+        val mapped = withParents.toMutableList()
+        val invented = mutableListOf<LocationEntity>()
+        fun placeNamed(name: String?): String? {
+            val trimmed = name?.trim().orEmpty()
+            if (trimmed.isBlank()) return null
+            PlaceIdentity.match(trimmed, mapped) { it.name }?.let { return it.id }
+            // It named somewhere real to the world it just built. It exists; it was simply
+            // never written down. Writing it down beats moving the person to the player.
+            val created = LocationEntity(
+                id = newId(),
+                worldId = worldId,
+                name = trimmed,
+                type = "BUILDING",
+                description = "Named when the world was built.",
+                discovered = false,
+                mapX = (mapped.size % 4) * 0.24f + 0.14f,
+                mapY = (mapped.size / 4) * 0.2f + 0.12f
+            )
+            mapped += created
+            invented += created
+            return created.id
+        }
+
         val npcs = build?.characters
             ?.filter { it.name.isNotBlank() }
             // The world builder sometimes casts the player as one of the locals. They are not.
@@ -691,16 +723,44 @@ class WorldForge(
                 secrets = incoming.secrets,
                 faction = incoming.faction,
                 relationshipToPlayer = incoming.relationshipToPlayer,
-                currentLocationId = locationIds[incoming.location.trim().lowercase()] ?: startId,
-                homeLocationId = locationIds[incoming.homeLocation.trim().lowercase()],
+                currentLocationId = placeNamed(incoming.location)
+                    ?: placeNamed(incoming.homeLocation)
+                    ?: startId,
+                homeLocationId = placeNamed(incoming.homeLocation),
                 routine = incoming.routine,
                 importance = incoming.importance.coerceIn(1, 5)
             )
             entity
         }.orEmpty()
-        if (npcs.isNotEmpty()) {
-            repo.saveCharacters(npcs)
-            npcs.filter { it.appearance.isNotBlank() }.forEach { npc ->
+        if (invented.isNotEmpty()) repo.saveLocations(invented)
+
+        // A world does not open with eight people standing on the pavement with you. Whoever
+        // the opening scene actually names belongs in it; everyone else is somewhere in their
+        // own life, which is what the rest of the map is for.
+        val opening = enforcedWorld.openingSituation.lowercase()
+        val elsewhere = mapped.filter { it.id != startId }
+        val cast = npcs.filter { it.currentLocationId == startId }
+        val crowd = if (cast.size <= OPENING_COMPANY) emptyList() else {
+            val named = cast.filter { npc ->
+                npc.name.split(' ').first().lowercase().let { first ->
+                    first.length >= 3 && Regex("\\b${Regex.escape(first)}\\b").containsMatchIn(opening)
+                }
+            }
+            val keep = (named + cast.sortedByDescending { it.importance }).distinct().take(OPENING_COMPANY)
+            cast - keep.toSet()
+        }
+        val placedNpcs = npcs.map { npc ->
+            if (npc !in crowd) npc else {
+                val away = npc.homeLocationId?.takeIf { it != startId }
+                    ?: elsewhere.firstOrNull { it.id == npc.homeLocationId }?.id
+                    ?: elsewhere.getOrNull(npc.name.length % elsewhere.size.coerceAtLeast(1))?.id
+                    ?: npc.currentLocationId
+                npc.copy(currentLocationId = away, homeLocationId = npc.homeLocationId ?: away)
+            }
+        }
+        if (placedNpcs.isNotEmpty()) {
+            repo.saveCharacters(placedNpcs)
+            placedNpcs.filter { it.appearance.isNotBlank() }.forEach { npc ->
                 repo.saveVisualIdentity(
                     VisualIdentityEntity(
                         id = newId(), worldId = worldId, subjectId = npc.id, subjectType = "CHARACTER",
@@ -788,6 +848,8 @@ class WorldForge(
     }
 
     private companion object {
+        /** How many people may be standing with the player when the story opens. */
+        const val OPENING_COMPANY = 2
         /** World building is legitimately slow; it is not the same budget as a turn. */
         const val CREATION_TIMEOUT_SECONDS = 600
         const val MAX_CREATION_TOKENS = 32_000

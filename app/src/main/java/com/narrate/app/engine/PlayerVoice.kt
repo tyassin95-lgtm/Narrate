@@ -163,6 +163,33 @@ object PlayerVoice {
     }
 
     /**
+     * Ordinary questions the turn ended on without the character saying a word back.
+     *
+     * This is the shape of the complaint: an NPC asks his name, the turn stops, and the player
+     * has to type "Adrian" to get past it. Nothing can rewrite the prose after the fact, but
+     * naming it puts a correction in front of the narrator for the next turn, which is how
+     * every other drift in this app gets pulled back.
+     */
+    fun unanswered(narration: String, snapshot: WorldSnapshot): List<String> {
+        if (narration.isBlank()) return emptyList()
+        val plain = SceneBrief.closingMoment(narration, characters = 700)
+        // Every line anybody speaks, in order. A question is unanswered when nobody says
+        // anything at all after it - the closing quotation mark of the question itself does
+        // not count as somebody answering.
+        val spoken = Regex("[\"\u201c]([^\"\u201d]{2,300})[\"\u201d]").findAll(plain).toList()
+        return questions(narration)
+            .map { triage(it, snapshot) }
+            .filter { it.who == Who.CHARACTER }
+            .filter { question ->
+                val asked = spoken.lastOrNull { it.groupValues[1].contains(question.text) }
+                    ?: return@filter false
+                spoken.none { it.range.first > asked.range.last }
+            }
+            .map { it.text }
+            .take(3)
+    }
+
+    /**
      * The instruction that goes with this turn: what the character answers, and what is left
      * standing for the player.
      */
