@@ -204,6 +204,26 @@ private fun OverviewTab(state: CodexUiState, viewModel: CodexViewModel, onCharac
     }
 }
 
+/** The draw action, showing its own progress so it is never pressed twice. */
+@Composable
+fun DrawButton(drawing: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    TextButton(onClick = onClick, enabled = enabled && !drawing) {
+        if (drawing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp,
+                color = NarrateColors.Accent
+            )
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(
+            if (drawing) "Drawing..." else "Draw",
+            color = if (enabled || drawing) NarrateColors.Accent else NarrateColors.TextMuted,
+            style = MaterialTheme.typography.labelSmall
+        )
+    }
+}
+
 private fun standingLabel(value: Int): String = when {
     value >= 50 -> "Allied ($value)"
     value >= 15 -> "Friendly ($value)"
@@ -438,12 +458,10 @@ private fun ObjectsTab(state: CodexUiState, viewModel: CodexViewModel) {
                         Text("Condition: ${item.state}", style = MaterialTheme.typography.bodySmall, color = NarrateColors.Gold)
                     }
                 }
-                TextButton(
-                    onClick = { viewModel.generateItemImage(item.id) },
+                DrawButton(
+                    drawing = state.isDrawing(item.id),
                     enabled = !state.generating
-                ) {
-                    Text("Draw", color = NarrateColors.Accent, style = MaterialTheme.typography.labelSmall)
-                }
+                ) { viewModel.generateItemImage(item.id) }
             }
         }
         if (state.items.isEmpty()) {

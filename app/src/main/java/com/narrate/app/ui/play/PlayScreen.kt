@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -32,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
@@ -73,11 +75,16 @@ fun PlayScreen(
     // choice while anything the player changes counts as their own words.
     var pendingChoice by remember { mutableStateOf<Choice?>(null) }
     var suggestionsOpen by remember { mutableStateOf(true) }
+    var inputFocused by remember { mutableStateOf(false) }
     var showImageSheet by remember { mutableStateOf(false) }
     var showIssues by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) { viewModel.ensureOpening() }
+    // A Column measures its children in order, so the input box - being last - is the one
+    // squeezed to nothing when the keyboard leaves too little room. Folding the suggestions
+    // away when the player starts typing keeps the box they are typing into visible.
+    LaunchedEffect(inputFocused) { if (inputFocused) suggestionsOpen = false }
     LaunchedEffect(state.turns.size, state.loading) {
         val target = (state.turns.size + if (state.loading) 1 else 0) - 1
         if (target >= 0) listState.animateScrollToItem(target.coerceAtLeast(0))
@@ -126,14 +133,16 @@ fun PlayScreen(
                 item { Spacer(Modifier.height(8.dp)) }
             }
 
-            PresenceBar(
-                names = state.presentCharacters.map { it.id to it.name },
-                portraits = state.presentCharacters.associate { character ->
-                    character.id to state.images.firstOrNull { it.id == character.portraitImageId }?.filePath
-                },
-                place = state.currentLocation?.name.orEmpty(),
-                onCharacter = onOpenCharacter
-            )
+            AnimatedVisibility(visible = !inputFocused) {
+                PresenceBar(
+                    names = state.presentCharacters.map { it.id to it.name },
+                    portraits = state.presentCharacters.associate { character ->
+                        character.id to state.images.firstOrNull { it.id == character.portraitImageId }?.filePath
+                    },
+                    place = state.currentLocation?.name.orEmpty(),
+                    onCharacter = onOpenCharacter
+                )
+            }
 
             AnimatedVisibility(visible = state.currentChoices.isNotEmpty() && !state.loading) {
                 SuggestedActions(
@@ -163,6 +172,7 @@ fun PlayScreen(
                 enabled = !state.loading,
                 generatingImage = state.generatingImage,
                 focusRequester = focusRequester,
+                onFocusChanged = { inputFocused = it },
                 onSend = {
                     viewModel.submit(input, viewModel.kindFor(input, pendingChoice, speaking))
                     input = ""
@@ -433,7 +443,12 @@ private fun SuggestedActions(
             )
         }
         AnimatedVisibility(visible = expanded) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(
+                Modifier
+                    .heightIn(max = 210.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 choices.forEach { choice ->
                     Row(
                         Modifier
@@ -507,6 +522,7 @@ private fun InputBar(
     enabled: Boolean,
     generatingImage: Boolean,
     focusRequester: FocusRequester,
+    onFocusChanged: (Boolean) -> Unit,
     onSend: () -> Unit,
     onImage: () -> Unit
 ) {
@@ -534,7 +550,12 @@ private fun InputBar(
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
-                modifier = Modifier.weight(1f).focusRequester(focusRequester),
+                modifier = Modifier
+                    .weight(1f)
+                    // Never let the field shrink to a bare outline with the text clipped out.
+                    .heightIn(min = 52.dp)
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { onFocusChanged(it.isFocused) },
                 placeholder = {
                     Text(
                         if (speaking) "Say anything..." else "Do anything...",

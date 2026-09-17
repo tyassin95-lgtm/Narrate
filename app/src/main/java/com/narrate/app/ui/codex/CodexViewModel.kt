@@ -29,9 +29,14 @@ data class CodexUiState(
     val issues: List<ContinuityIssueEntity> = emptyList(),
     val turns: List<TurnEntity> = emptyList(),
     val usage: List<UsageEntity> = emptyList(),
-    val generating: Boolean = false,
+    /** The entity currently being drawn, so its own row can show it is working. */
+    val generatingSubjectId: String? = null,
     val message: String? = null
 ) {
+    val generating: Boolean get() = generatingSubjectId != null
+
+    fun isDrawing(subjectId: String): Boolean = generatingSubjectId == subjectId
+
     val player: CharacterEntity? get() = characters.firstOrNull { it.isPlayer }
     val npcs: List<CharacterEntity> get() = characters.filter { !it.isPlayer }
     fun imagePath(id: String?): String? = images.firstOrNull { it.id == id }?.filePath
@@ -44,7 +49,10 @@ class CodexViewModel(application: Application, private val worldId: String) : An
 
     private val container = application.container
     private val repo = container.repository
-    private val transient = MutableStateFlow(false to null as String?)
+    /** Which subject is being drawn, and anything the last attempt has to say. */
+    private data class DrawState(val subjectId: String? = null, val message: String? = null)
+
+    private val transient = MutableStateFlow(DrawState())
 
     val state: StateFlow<CodexUiState> = combine(
         combine(
@@ -83,8 +91,8 @@ class CodexViewModel(application: Application, private val worldId: String) : An
             issues = third[2] as List<ContinuityIssueEntity>,
             turns = third[3] as List<TurnEntity>,
             usage = third[4] as List<UsageEntity>,
-            generating = flags.first,
-            message = flags.second
+            generatingSubjectId = flags.subjectId,
+            message = flags.message
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CodexUiState())
 
@@ -101,7 +109,7 @@ class CodexViewModel(application: Application, private val worldId: String) : An
         viewModelScope.launch {
             val world = repo.world(worldId) ?: return@launch
             repo.saveWorld(world.copy(playStyle = style.id))
-            transient.value = transient.value.first to "Pacing set to ${style.label.lowercase()}."
+            transient.value = transient.value.copy(message = "Pacing set to ${style.label.lowercase()}.")
         }
     }
 
@@ -109,30 +117,44 @@ class CodexViewModel(application: Application, private val worldId: String) : An
         viewModelScope.launch { repo.setMemoryPinned(memory.id, !memory.pinned) }
     }
 
-    fun generatePortrait(characterId: String) = generate(ImageSubject.Character(characterId))
-    fun generateLocationImage(locationId: String) = generate(ImageSubject.Location(locationId))
-    fun generateItemImage(itemId: String) = generate(ImageSubject.Item(itemId))
+    fun generatePortrait(characterId: String) = generate(ImageSubject.Character(characterId), characterId)
+    fun generateLocationImage(locationId: String) = generate(ImageSubject.Location(locationId), locationId)
+    fun generateItemImage(itemId: String) = generate(ImageSubject.Item(itemId), itemId)
 
-    private fun generate(subject: ImageSubject) {
+    /**
+     * One drawing at a time, and the row that asked for it says so. Without visible progress
+     * the button looks dead and gets pressed again, which is both confusing and expensive.
+     */
+    private fun generate(subject: ImageSubject, subjectId: String) {
+        if (transient.value.subjectId != null) return
+        transient.value = DrawState(subjectId = subjectId)
         viewModelScope.launch {
-            if (transient.value.first) return@launch
-            transient.value = true to null
             val snapshot = repo.snapshot(worldId, container.settings.current.recentTurnWindow)
             if (snapshot == null) {
-                transient.value = false to "World not found."
+                transient.value = DrawState(message = "World not found.")
                 return@launch
             }
             val result = container.imageDirector.generate(snapshot, subject)
-            transient.value = false to result.fold(
-                onSuccess = { "Saved: ${it.label}" },
-                onFailure = { it.message ?: "The image could not be generated." }
+            transient.value = DrawState(
+                message = result.fold(
+                    onSuccess = { "Saved: ${it.label}" },
+                    onFailure = { it.message ?: "The image could not be generated." }
+                )
             )
         }
     }
 
-    fun clearMessage() { transient.value = transient.value.first to null }
+    fun clearMessage() { transient.value = transient.value.copy(message = null) }
 
     fun toggleFavorite(image: ImageEntity) {
         viewModelScope.launch { repo.setImageFavorite(image.id, !image.favorite) }
+    }
+
+    /** Removes an image, and everything that pointed at it, from the world. */
+    fun deleteImage(image: ImageEntity) {
+        viewModelScope.launch {
+            repo.deleteImage(image)
+            transient.value = transient.value.copy(message = "Deleted: ${image.label}")
+        }
     }
 }

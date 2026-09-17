@@ -137,6 +137,58 @@ class WorldRepository(context: Context) {
     suspend fun setImageFavorite(id: String, favorite: Boolean) = imageDao.setFavorite(id, favorite)
     suspend fun setMemoryPinned(id: String, pinned: Boolean) = memoryDao.setPinned(id, pinned)
 
+    /**
+     * Removes an image from the world for good.
+     *
+     * An image is not only a file: it may be a character's portrait, a place's icon, a world's
+     * cover, or the visual reference future generations are seeded from. All of those have to
+     * let go of it, or the album would show a picture the world still quietly depends on.
+     */
+    suspend fun deleteImage(image: ImageEntity) {
+        val worldId = image.worldId
+
+        // Each subject that used this image falls back to its next surviving picture, so
+        // deleting the newest portrait of someone does not leave them with no face at all.
+        val fallbacks = mutableMapOf<String, String?>()
+        visualDao.all(worldId).forEach { identity ->
+            val allRefs = identity.referenceImageIds.split(",").filter { it.isNotBlank() }
+            val remaining = allRefs.filter { it != image.id }
+            val wasUsed = identity.primaryImageId == image.id || remaining.size != allRefs.size
+            if (!wasUsed) return@forEach
+            val fallback = if (identity.primaryImageId == image.id) {
+                remaining.firstOrNull()
+            } else {
+                identity.primaryImageId
+            }
+            fallbacks[identity.subjectId] = fallback
+            saveVisualIdentity(
+                identity.copy(
+                    primaryImageId = fallback,
+                    referenceImageIds = remaining.joinToString(",")
+                )
+            )
+        }
+
+        characterDao.all(worldId).filter { it.portraitImageId == image.id }.forEach {
+            saveCharacter(it.copy(portraitImageId = fallbacks[it.id]))
+        }
+        locationDao.all(worldId).filter { it.imageId == image.id }.forEach {
+            saveLocation(it.copy(imageId = fallbacks[it.id]))
+        }
+        itemDao.all(worldId).filter { it.imageId == image.id }.forEach {
+            saveItems(listOf(it.copy(imageId = fallbacks[it.id])))
+        }
+        worldDao.get(worldId)?.takeIf { it.coverImageId == image.id }?.let { world ->
+            val nextCover = imageDao.all(worldId)
+                .filter { it.id != image.id && (it.type == "SCENE" || it.type == "LOCATION") }
+                .maxByOrNull { it.createdAt }
+            saveWorld(world.copy(coverImageId = nextCover?.id))
+        }
+
+        runCatching { File(image.filePath).delete() }
+        imageDao.delete(image.id)
+    }
+
     /** Rewind: drop every turn from [fromIndex] on so the player can retry a moment. */
     suspend fun rewindTo(worldId: String, fromIndex: Int) {
         turnDao.deleteFrom(worldId, fromIndex)

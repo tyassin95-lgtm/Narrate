@@ -114,7 +114,7 @@ class ImagePromptTest {
             prompt.contains("Do not substitute a different subject")
         )
         assertTrue(prompt.contains("Show this object and nothing else"))
-        assertTrue("its holder is context", prompt.contains("carried by the player"))
+        assertTrue("its owner is context", prompt.contains("It belongs to the player character."))
         assertTrue("so is where it is", prompt.contains("currently at Night Ward"))
         assertTrue("another item must not leak in", !prompt.contains("scuffed brown leather"))
         assertTrue("nor the wider scene's cast", !prompt.contains("Lena Morales"))
@@ -180,6 +180,83 @@ class ImagePromptTest {
         assertTrue(prompt.contains("THE PROTAGONIST - Adrian Voss"))
         assertTrue(prompt.contains("ALSO PRESENT - Lena Morales"))
         assertTrue(prompt.contains("WHERE: Night Ward"))
+    }
+
+    @Test
+    fun `an object's owner is described so a likeness on it is the right person`() = runBlocking {
+        // The badge came back showing a woman; the player character is a man, and the prompt
+        // never said who owned it.
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(badgeId))
+        val prompt = fake.prompts.single()
+        assertTrue(prompt.contains("It belongs to the player character."))
+        assertTrue(prompt.contains("it must show Adrian Voss"))
+        assertTrue(prompt.contains("Dark hair, green eyes."))
+    }
+
+    @Test
+    fun `an object nobody is carrying does not claim an owner`() = runBlocking {
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(satchelId))
+        assertTrue(!fake.prompts.single().contains("It belongs to"))
+    }
+
+    @Test
+    fun `the prompt never promises a reference image that was not attached`() = runBlocking {
+        // First image establishes a reference for the badge.
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(badgeId))
+        assertTrue("nothing to reference yet", !fake.prompts.first().contains("reference image"))
+
+        // A model with no reference support must not be told one is attached, and above all
+        // must not be told to keep a face on a picture of an object.
+        settings.setImageModel(ProviderId.OPENAI, "dall-e-3")
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(badgeId))
+        val withoutSupport = fake.prompts.last()
+        assertTrue("no reference was attached, so none may be claimed", !withoutSupport.contains("reference image"))
+        assertTrue("and no face should be invited onto an object", !withoutSupport.contains("face"))
+    }
+
+    @Test
+    fun `a model that does take references is told what to preserve, in the subject's own terms`() = runBlocking {
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(badgeId))
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(badgeId))
+        val second = fake.prompts.last()
+        assertTrue(second.contains("A reference image of this exact object is attached"))
+        assertTrue("an object has shape and wear, not a face", second.contains("the same shape, materials, markings and wear"))
+        assertTrue(!second.contains("face, build"))
+    }
+
+    @Test
+    fun `a portrait reference is still described as an identity`() = runBlocking {
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Character(playerId))
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Character(playerId))
+        val second = fake.prompts.last()
+        assertTrue(second.contains("Keep the same identity - face, build and distinguishing features"))
+    }
+
+    @Test
+    fun `a place reference is described as architecture`() = runBlocking {
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Location(wardId))
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Location(wardId))
+        assertTrue(fake.prompts.last().contains("Keep the same architecture, layout and materials"))
+    }
+
+    @Test
+    fun `the fallback instruction reads as English`() = runBlocking {
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(badgeId))
+        val prompt = fake.prompts.single()
+        assertTrue("the article was doubled", !prompt.contains("what a an object"))
+        assertTrue(prompt.contains("what an object called"))
+
+        fake.prompts.clear()
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Character(npcId))
+        assertTrue(fake.prompts.single().contains("what a person called"))
+    }
+
+    @Test
+    fun `every prompt still ends with the no-text rule exactly once`() = runBlocking {
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.CurrentScene)
+        val prompt = fake.prompts.single()
+        assertEquals(1, prompt.split("No text, captions, watermarks or borders").size - 1)
+        assertTrue(prompt.trimEnd().endsWith("in the image."))
     }
 
     @Test

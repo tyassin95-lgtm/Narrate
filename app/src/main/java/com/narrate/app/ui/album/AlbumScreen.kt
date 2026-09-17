@@ -1,6 +1,8 @@
 package com.narrate.app.ui.album
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -13,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,6 +46,7 @@ fun AlbumScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var filter by remember { mutableStateOf("ALL") }
+    var pendingDelete by remember { mutableStateOf<ImageEntity?>(null) }
 
     val types = listOf("ALL", "SCENE", "PORTRAIT", "LOCATION", "EVENT", "ITEM", "FAVOURITES")
     val visible = when (filter) {
@@ -78,17 +82,71 @@ fun AlbumScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(visible) { image ->
-                        AlbumTile(image, onClick = { onImage(image.id) })
+                        AlbumTile(
+                            image = image,
+                            onClick = { onImage(image.id) },
+                            onLongClick = { pendingDelete = image }
+                        )
                     }
                 }
             }
         }
     }
+
+    pendingDelete?.let { image ->
+        DeleteImageDialog(
+            image = image,
+            onDismiss = { pendingDelete = null },
+            onConfirm = {
+                pendingDelete = null
+                viewModel.deleteImage(image)
+            }
+        )
+    }
 }
 
+/**
+ * Deleting an image is permanent, and it may be doing a job elsewhere in the world - a
+ * character's portrait, a place's icon, the reference future pictures are drawn from - so
+ * the dialog says so rather than asking a bare "are you sure".
+ */
 @Composable
-private fun AlbumTile(image: ImageEntity, onClick: () -> Unit) {
-    Column(Modifier.clickable(onClick = onClick)) {
+private fun DeleteImageDialog(image: ImageEntity, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NarrateColors.SurfaceElevated,
+        title = { Text("Delete this image?", color = NarrateColors.TextPrimary) },
+        text = {
+            Column {
+                Text(
+                    image.label,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = NarrateColors.TextSecondary
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "It is removed from the album and deleted from this device. Anywhere it was " +
+                        "being used - as a portrait, a map icon, or the reference future images of " +
+                        "this subject are drawn from - falls back to the next image of that subject, " +
+                        "or to none. This cannot be undone.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NarrateColors.TextMuted
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("Delete", color = NarrateColors.Accent) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Keep", color = NarrateColors.TextSecondary) }
+        }
+    )
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AlbumTile(image: ImageEntity, onClick: () -> Unit, onLongClick: () -> Unit) {
+    Column(Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Box(
             Modifier
                 .fillMaxWidth()
@@ -138,6 +196,7 @@ fun ImageDetailScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val image = state.images.firstOrNull { it.id == imageId }
+    var confirmingDelete by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = NarrateColors.Background,
@@ -151,10 +210,24 @@ fun ImageDetailScreen(
                             tint = NarrateColors.Accent
                         )
                     }
+                    IconButton(onClick = { confirmingDelete = true }) {
+                        Icon(Icons.Default.Delete, "Delete this image", tint = NarrateColors.TextSecondary)
+                    }
                 }
             }
         }
     ) { padding ->
+        if (confirmingDelete && image != null) {
+            DeleteImageDialog(
+                image = image,
+                onDismiss = { confirmingDelete = false },
+                onConfirm = {
+                    confirmingDelete = false
+                    viewModel.deleteImage(image)
+                    onBack()
+                }
+            )
+        }
         if (image == null) {
             EmptyState("Not found", "This image is no longer in the album.", Modifier.padding(padding))
             return@Scaffold

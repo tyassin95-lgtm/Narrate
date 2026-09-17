@@ -41,16 +41,10 @@ fun CharacterDetailScreen(
         containerColor = NarrateColors.Background,
         topBar = {
             NarrateTopBar(character?.name ?: "Character", onBack = onBack) {
-                TextButton(
-                    onClick = { viewModel.generatePortrait(characterId) },
+                DrawButton(
+                    drawing = state.isDrawing(characterId),
                     enabled = !state.generating
-                ) {
-                    Text(
-                        if (state.generating) "Drawing..." else "Draw",
-                        color = NarrateColors.Accent,
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
+                ) { viewModel.generatePortrait(characterId) }
             }
         }
     ) { padding ->
@@ -158,16 +152,10 @@ fun LocationDetailScreen(
         containerColor = NarrateColors.Background,
         topBar = {
             NarrateTopBar(location?.name ?: "Location", onBack = onBack) {
-                TextButton(
-                    onClick = { viewModel.generateLocationImage(locationId) },
+                DrawButton(
+                    drawing = state.isDrawing(locationId),
                     enabled = !state.generating
-                ) {
-                    Text(
-                        if (state.generating) "Drawing..." else "Draw",
-                        color = NarrateColors.Accent,
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
+                ) { viewModel.generateLocationImage(locationId) }
             }
         }
     ) { padding ->

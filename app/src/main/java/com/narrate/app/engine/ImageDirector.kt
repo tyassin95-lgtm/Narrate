@@ -57,10 +57,18 @@ class ImageDirector(
             emptyList()
         }
 
+        val prompt = buildString {
+            append(plan.prompt)
+            if (references.isNotEmpty()) {
+                appendLine(referenceNote(plan.type))
+            }
+            appendLine("No text, captions, watermarks or borders in the image.")
+        }
+
         val result = provider.generateImage(
             ImageRequest(
                 model = choice.model,
-                prompt = plan.prompt,
+                prompt = prompt,
                 references = references,
                 size = plan.size
             ),
@@ -81,7 +89,7 @@ class ImageDirector(
             locationName = plan.locationName,
             storyTime = snapshot.world.storyTime,
             turnIndex = snapshot.world.turnCount,
-            prompt = plan.prompt,
+            prompt = prompt,
             model = choice.model,
             provider = choice.provider.name,
             usedReferences = references.joinToString(", ") { it.label }
@@ -126,7 +134,7 @@ class ImageDirector(
                             .filterNotNull()
                             .joinToString(", "),
                         described = established(identity?.canonicalDescription, character.appearance),
-                        noun = "person"
+                        noun = "a person"
                     )
                     if (character.outfit.isNotBlank()) appendLine("Currently wearing: ${character.outfit}")
                     if (character.physicalState.isNotBlank()) appendLine("Current condition: ${character.physicalState}")
@@ -139,8 +147,6 @@ class ImageDirector(
                     }
                     appendLine("Time of day: $timeOfDay.")
                     if (extraDirection.isNotBlank()) appendLine("Additional direction: $extraDirection")
-                    appendReferenceNote(identity)
-                    appendLine("No text, captions, watermarks or borders in the image.")
                 }
                 Plan(
                     prompt = prompt,
@@ -171,15 +177,13 @@ class ImageDirector(
                         heading = "THE PLACE",
                         name = "${location.name} (${location.type.lowercase()})",
                         described = established(identity?.canonicalDescription, location.description),
-                        noun = "place"
+                        noun = "a place"
                     )
                     if (location.atmosphere.isNotBlank()) appendLine("Atmosphere: ${location.atmosphere}")
                     if (location.notableFeatures.isNotBlank()) appendLine("Must include: ${location.notableFeatures}")
                     if (location.currentState.isNotBlank()) appendLine("Its current condition: ${location.currentState}")
                     appendLine("Time of day: $timeOfDay. Day ${world.dayNumber}.")
                     if (extraDirection.isNotBlank()) appendLine("Additional direction: $extraDirection")
-                    appendReferenceNote(identity)
-                    appendLine("No text, captions, watermarks or borders in the image.")
                 }
                 Plan(
                     prompt = prompt,
@@ -218,14 +222,21 @@ class ImageDirector(
                     if (item.significance.isNotBlank()) {
                         appendLine("It matters because: ${item.significance.truncate(200)}")
                     }
-                    holder?.let {
-                        appendLine("It is carried by ${if (it.isPlayer) "the player" else it.name}.")
+                    holder?.let { owner ->
+                        appendLine("It belongs to ${if (owner.isPlayer) "the player character" else owner.name}.")
+                        if (owner.appearance.isNotBlank()) {
+                            // An ID, a photograph, a portrait or a monogram shows its owner. Without
+                            // this the model invents a stranger and puts them on the player's badge.
+                            appendLine(
+                                "If this object bears its owner's likeness or name - an identity card, " +
+                                    "a photograph, a portrait, an engraving - it must show " +
+                                    "${owner.name}, described as: ${owner.appearance.truncate(300)}"
+                            )
+                        }
                     }
                     place?.let { appendLine("It is currently at ${it.name}.") }
                     appendLine("Show this object and nothing else. It fills the frame.")
                     if (extraDirection.isNotBlank()) appendLine("Additional direction: $extraDirection")
-                    appendReferenceNote(identity)
-                    appendLine("No text, captions, watermarks or borders in the image.")
                 }
                 Plan(
                     prompt = prompt,
@@ -299,10 +310,6 @@ class ImageDirector(
                     }
                     appendLine("Compose it as a still from a film: specific, grounded, and true to the description above.")
                     appendLine("Do not invent characters who are not listed here.")
-                    if (identities.isNotEmpty()) {
-                        appendLine("Reference images are attached for the people and place; keep their faces, builds and architecture identical.")
-                    }
-                    appendLine("No text, captions, watermarks or borders in the image.")
                 }
 
                 val label = when {
@@ -344,7 +351,7 @@ class ImageDirector(
             appendLine("Its established description, which must be reproduced exactly: $described")
         } else {
             appendLine(
-                "No description has been recorded for it yet. Depict exactly what a $noun called " +
+                "No description has been recorded for it yet. Depict exactly what $noun called " +
                     "\"$name\" plainly is, as it would appear in this world. Do not substitute a " +
                     "different subject, and do not invent an elaborate one."
             )
@@ -355,13 +362,23 @@ class ImageDirector(
     private fun established(vararg candidates: String?): String? =
         candidates.firstOrNull { !it.isNullOrBlank() }
 
-    private fun StringBuilder.appendReferenceNote(identity: VisualIdentityEntity?) {
-        if (identity?.primaryImageId != null) {
-            appendLine(
-                "A reference image of this subject is attached. Keep the same identity - face, build, " +
-                    "distinguishing features, architecture - and change only what the description says has changed."
-            )
-        }
+    /**
+     * What to say about an attached reference, written for the kind of subject it is.
+     *
+     * This is only ever added when an image really was attached. Telling a model to "keep the
+     * same face" while attaching nothing is how a hospital ID badge came back wearing a
+     * stranger's portrait: the instruction invited a face the request never asked for.
+     */
+    private fun referenceNote(type: String): String = when (type) {
+        "ITEM" -> "A reference image of this exact object is attached. Keep it the same object - " +
+            "the same shape, materials, markings and wear - and change only what the description " +
+            "says has changed."
+        "LOCATION" -> "A reference image of this exact place is attached. Keep the same architecture, " +
+            "layout and materials, and change only what the description says has changed."
+        "SCENE", "EVENT" -> "Reference images are attached for the people and the place in this scene. " +
+            "Keep their faces, builds and architecture identical to them."
+        else -> "A reference image of this subject is attached. Keep the same identity - face, build " +
+            "and distinguishing features - and change only what the description says has changed."
     }
 
     private fun referenceIdsOf(identity: VisualIdentityEntity): List<String> =

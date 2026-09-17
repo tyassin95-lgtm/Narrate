@@ -38,7 +38,8 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
 - **An album that is part of the world.** Every generated image is saved with a readable label
   ("Elena - Apartment - Night", "Marcus - First Appearance"), its story time, its turn, who is in
   it and where it happened - and once a place or an object has been drawn, its picture becomes
-  its icon on the map and in the inventory.
+  its icon on the map and in the inventory. Images can be deleted, and anything that was using
+  one falls back to the next picture of that subject rather than losing its face.
 - **Suggestions you can edit.** Tapping a suggested action loads it into the input box to read,
   rewrite or discard. Nothing is sent until you press send.
 
@@ -188,7 +189,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 122 tests covering parsing, continuity, canon, imagery, cost and persistence
+./gradlew testDebugUnitTest         # 136 tests covering parsing, continuity, canon, imagery, cost and persistence
 ```
 
 Without a keystore the release APK is signed with the debug key so it still installs.
@@ -252,7 +253,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 122 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 136 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
@@ -276,4 +277,6 @@ A third covers image prompting: an item carried from a starting inventory has no
 and the test asserts that name reaches the prompt, that no other object or character leaks into
 it, and that the saved picture becomes the item's icon. A fourth drives world generation against a
 model that returns an empty message, and asserts it is retried with more room and then explained
-rather than left spinning.
+rather than left spinning. A fifth covers the album: deleting an image releases every portrait,
+map icon, inventory icon, cover and visual reference that pointed at it, falling back to the
+subject's next surviving picture.
