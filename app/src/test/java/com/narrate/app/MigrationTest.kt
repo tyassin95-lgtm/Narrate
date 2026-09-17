@@ -4,7 +4,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
+import androidx.room.Room
 import com.narrate.app.data.db.NarrateDatabase
+import com.narrate.app.data.entity.ItemEntity
+import com.narrate.app.data.entity.WorldEntity
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -188,7 +192,75 @@ class MigrationTest {
         }
     }
 
+    /**
+     * The upgrade a released copy of the app actually performs.
+     *
+     * The tests above check that the SQL does what it says. This one checks that what it
+     * leaves behind is a schema Room agrees with: a column Room expects to be nullable, or an
+     * index the migration forgot, is not a failed query - it is a crash on first launch for
+     * everyone who already had the app.
+     */
+    @Test
+    fun `a real save upgraded from version 3 is accepted by Room itself`() = runBlocking<Unit> {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        context.deleteDatabase(REAL_DB)
+
+        fun open() = Room.databaseBuilder(context, NarrateDatabase::class.java, REAL_DB)
+            .addMigrations(
+                NarrateDatabase.MIGRATION_1_2,
+                NarrateDatabase.MIGRATION_2_3,
+                NarrateDatabase.MIGRATION_3_4
+            )
+            .build()
+
+        val current = open()
+        current.worldDao().upsert(WorldEntity(id = "w1", name = "Tidewater"))
+        current.itemDao().upsertAll(
+            listOf(ItemEntity(id = "i1", worldId = "w1", name = "wool jacket", ownerId = "pc", holderId = "pc"))
+        )
+        current.close()
+
+        // Put the file back the way version 3 left it: items without an owner column.
+        val raw = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(REAL_DB)
+                .callback(object : SupportSQLiteOpenHelper.Callback(4) {
+                    override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                    override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+                })
+                .build()
+        )
+        raw.writableDatabase.use { db ->
+            val tableSql = db.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='items'")
+                .use { it.moveToFirst(); it.getString(0) }
+            val indexSql = db.query("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='items' AND sql IS NOT NULL")
+                .use { cursor -> generateSequence { if (cursor.moveToNext()) cursor.getString(0) else null }.toList() }
+            val columns = db.query("PRAGMA table_info(items)").use { cursor ->
+                generateSequence { if (cursor.moveToNext()) cursor.getString(1) else null }.toList()
+            }.filter { it != "ownerId" }
+            val kept = columns.joinToString(", ") { "`$it`" }
+
+            db.execSQL("ALTER TABLE items RENAME TO items_upgraded")
+            db.execSQL(tableSql.replace(Regex(",\\s*`?ownerId`?\\s+TEXT"), ""))
+            db.execSQL("INSERT INTO items ($kept) SELECT $kept FROM items_upgraded")
+            db.execSQL("DROP TABLE items_upgraded")
+            indexSql.forEach { db.execSQL(it) }
+            db.execSQL("PRAGMA user_version = 3")
+        }
+
+        // Opening it again runs MIGRATION_3_4 and then Room's own schema validation.
+        val upgraded = open()
+        val items = upgraded.itemDao().all("w1")
+        assertEquals(1, items.size)
+        assertEquals("wool jacket", items.first().name)
+        assertEquals("the owner is recovered from whoever was holding it", "pc", items.first().ownerId)
+        assertEquals("Tidewater", upgraded.worldDao().get("w1")?.name)
+        upgraded.close()
+        context.deleteDatabase(REAL_DB)
+    }
+
     private companion object {
         const val DB_NAME = "migration-test.db"
+        const val REAL_DB = "migration-real.db"
     }
 }

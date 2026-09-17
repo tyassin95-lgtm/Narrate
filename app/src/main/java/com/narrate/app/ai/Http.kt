@@ -1,7 +1,10 @@
 package com.narrate.app.ai
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -9,6 +12,7 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resumeWithException
 
 /**
  * Shared HTTP plumbing. Narration calls are long-running by nature, so the timeouts
@@ -40,13 +44,9 @@ object Http {
         provider: ProviderId,
         request: Request,
         timeoutSeconds: Int? = null
-    ): String = withContext(Dispatchers.IO) {
-        val response: Response = try {
-            clientFor(timeoutSeconds).newCall(request).execute()
-        } catch (t: Throwable) {
-            throw ProviderException(provider, describeNetworkFailure(t, timeoutSeconds), t)
-        }
-        response.use {
+    ): String {
+        val response = call(provider, clientFor(timeoutSeconds).newCall(request), timeoutSeconds)
+        return response.use {
             val body = it.body?.string().orEmpty()
             if (!it.isSuccessful) {
                 throw ProviderException(provider, "HTTP ${it.code} - ${extractError(body)}")
@@ -55,21 +55,53 @@ object Http {
         }
     }
 
-    suspend fun executeBytes(provider: ProviderId, request: Request): Pair<ByteArray, String> =
-        withContext(Dispatchers.IO) {
-            val response = try {
-                client.newCall(request).execute()
-            } catch (t: Throwable) {
-                throw ProviderException(provider, "Network error: ${t.message ?: t::class.simpleName}", t)
+    suspend fun executeBytes(provider: ProviderId, request: Request): Pair<ByteArray, String> {
+        val response = call(provider, client.newCall(request), timeoutSeconds = null)
+        return response.use {
+            val bytes = it.body?.bytes() ?: ByteArray(0)
+            if (!it.isSuccessful) {
+                throw ProviderException(provider, "HTTP ${it.code} - ${extractError(String(bytes))}")
             }
-            response.use {
-                val bytes = it.body?.bytes() ?: ByteArray(0)
-                if (!it.isSuccessful) {
-                    throw ProviderException(provider, "HTTP ${it.code} - ${extractError(String(bytes))}")
-                }
-                bytes to (it.body?.contentType()?.toString() ?: "image/png")
-            }
+            bytes to (it.body?.contentType()?.toString() ?: "image/png")
         }
+    }
+
+    /**
+     * Runs one call, and hangs up the moment the caller walks away.
+     *
+     * A blocking `execute()` inside `withContext` keeps running after its coroutine is
+     * cancelled: the player who abandons a generation would still be paying for the tokens it
+     * goes on to produce, and the thread stays held until the timeout. Enqueueing instead
+     * means cancelling the coroutine cancels the request itself.
+     */
+    private suspend fun call(
+        provider: ProviderId,
+        call: Call,
+        timeoutSeconds: Int?
+    ): Response = withContext(Dispatchers.IO) {
+        suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation { runCatching { call.cancel() } }
+            call.enqueue(object : Callback {
+                override fun onResponse(call: Call, response: Response) {
+                    continuation.resume(response) { _, value, _ -> value.closeQuietly() }
+                }
+
+                override fun onFailure(call: Call, e: java.io.IOException) {
+                    // A failure caused by our own cancellation is not worth reporting: the
+                    // continuation is already gone and nobody is waiting for an explanation.
+                    if (call.isCanceled()) {
+                        continuation.cancel()
+                    } else {
+                        continuation.resumeWithException(
+                            ProviderException(provider, describeNetworkFailure(e, timeoutSeconds), e)
+                        )
+                    }
+                }
+            })
+        }
+    }
+
+    private fun Response.closeQuietly() = runCatching { close() }
 
     /** Says plainly when a call ran out of time rather than failing outright. */
     private fun describeNetworkFailure(t: Throwable, timeoutSeconds: Int?): String {

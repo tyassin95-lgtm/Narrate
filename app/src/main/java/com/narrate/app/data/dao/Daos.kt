@@ -110,6 +110,8 @@ interface MemoryDao {
     suspend fun pinned(worldId: String): List<MemoryEntity>
     @Query("SELECT COUNT(*) FROM memories WHERE worldId = :worldId") suspend fun count(worldId: String): Int
     @Query("UPDATE memories SET pinned = :pinned WHERE id = :id") suspend fun setPinned(id: String, pinned: Boolean)
+    @Query("DELETE FROM memories WHERE worldId = :worldId AND turnIndex >= :from")
+    suspend fun deleteFrom(worldId: String, from: Int)
     @Delete suspend fun delete(memory: MemoryEntity)
     @Query("DELETE FROM memories WHERE worldId = :worldId") suspend fun deleteByWorld(worldId: String)
 }
@@ -181,6 +183,8 @@ interface ContinuityIssueDao {
     fun observeAll(worldId: String): Flow<List<ContinuityIssueEntity>>
     @Query("SELECT * FROM continuity_issues WHERE worldId = :worldId AND turnIndex = :turnIndex")
     suspend fun forTurn(worldId: String, turnIndex: Int): List<ContinuityIssueEntity>
+    @Query("DELETE FROM continuity_issues WHERE worldId = :worldId AND turnIndex >= :from")
+    suspend fun deleteFrom(worldId: String, from: Int)
     @Query("DELETE FROM continuity_issues WHERE worldId = :worldId") suspend fun deleteByWorld(worldId: String)
 }
 

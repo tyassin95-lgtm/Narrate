@@ -130,6 +130,11 @@ fun PlayScreen(
                 if (state.loading) {
                     item { ThinkingIndicator() }
                 }
+                // A world whose opening never arrived - the model was unreachable, the key was
+                // wrong - would otherwise be a blank screen with no way back in.
+                if (state.turns.isEmpty() && !state.loading) {
+                    item { UnbegunWorld(onBegin = viewModel::ensureOpening) }
+                }
                 item { Spacer(Modifier.height(8.dp)) }
             }
 
@@ -337,6 +342,39 @@ private fun TurnBlock(
                     }
                 }
             }
+        }
+    }
+}
+
+/** Shown when a world exists but has never been narrated, so the player can start it again. */
+@Composable
+private fun UnbegunWorld(onBegin: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            "This world has not begun yet.",
+            style = MaterialTheme.typography.titleMedium,
+            color = NarrateColors.TextPrimary
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "The opening scene could not be reached. Check your model and key in Settings, then " +
+                "open the story again.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = NarrateColors.TextMuted,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+        Spacer(Modifier.height(20.dp))
+        Button(
+            onClick = onBegin,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = NarrateColors.Accent,
+                contentColor = Color.White
+            )
+        ) {
+            Text("Begin the story")
         }
     }
 }

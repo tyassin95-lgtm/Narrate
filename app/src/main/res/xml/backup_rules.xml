@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Worlds, images and settings are worth restoring onto a new device. API keys are not:
+  they are sealed with a key that lives in this device's keystore and cannot travel with
+  the backup, so restoring them would hand the new device ciphertext nothing can open.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="narrate_secure.xml" />
+</full-backup-content>

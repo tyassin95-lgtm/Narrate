@@ -236,4 +236,26 @@ class TurnParserTest {
         assertEquals(3, parsed.choices.size)
         assertEquals("Leave without a word", parsed.choices[1].label)
     }
+
+    @Test
+    fun `a line that ends on a typographic quote is finished, not cut off`() {
+        // Judging this unfinished buys a repair call, and its cost, for every turn that ends
+        // on someone speaking - which is most of them.
+        assertTrue(
+            "straight quotes have always read as finished",
+            !TurnParser.endsMidSentence("She looked up at the sound of the door. \"You came after all.\"")
+        )
+        assertTrue(
+            "and a curly pair is the same sentence",
+            !TurnParser.endsMidSentence("She looked up at the sound of the door. \u201cYou came after all.\u201d")
+        )
+        assertTrue(
+            "an ellipsis is a deliberate ending too",
+            !TurnParser.endsMidSentence("She started to answer, then thought better of it\u2026")
+        )
+        assertTrue(
+            "something genuinely cut off is still caught",
+            TurnParser.endsMidSentence("She looked up at the sound of the door and started to say something abou")
+        )
+    }
 }

@@ -330,10 +330,18 @@ class TurnDirector(
         appendLine(SceneBrief.render(snapshot, input, kind))
         appendLine()
         appendLine("# THIS TURN")
-        appendLine(
-            if (kind == "OPENING") Prompts.openingInstruction(snapshot.world)
-            else Prompts.playerInputInstruction(input, kind)
-        )
+        // The first turn is the world's opening even when the player typed something first -
+        // which is what happens when the opening call failed and they tried again by acting.
+        // Losing the scene they wrote because of a network error is not acceptable.
+        if (kind == "OPENING" || turnIndex == 0) {
+            appendLine(Prompts.openingInstruction(snapshot.world))
+            if (input.isNotBlank()) {
+                appendLine()
+                appendLine(Prompts.playerInputInstruction(input, kind))
+            }
+        } else {
+            appendLine(Prompts.playerInputInstruction(input, kind))
+        }
         appendLine()
         appendLine(
             "Respond with the four sections in order: ${TurnProtocol.NARRATION}, ${TurnProtocol.CHOICES}, " +

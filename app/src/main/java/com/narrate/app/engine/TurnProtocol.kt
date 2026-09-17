@@ -347,7 +347,13 @@ object TurnParser {
         if (trimmed.length < 40) return false
         if (trimmed.endsWith("]]")) return false
         val last = trimmed.last()
-        return last !in setOf('.', '!', '?', '"', '\'', ')', ':', '-', '*', '_', ']', '}')
+        // Typographic punctuation ends a sentence just as straight punctuation does. Treating
+        // a line that closes on a curly quote as unfinished would buy a repair call, and its
+        // cost, for every turn that ends on someone speaking.
+        return last !in setOf(
+            '.', '!', '?', '"', '\'', ')', ':', '-', '*', '_', ']', '}',
+            '\u201d', '\u2019', '\u00bb', '\u2026', '\u2014'
+        )
     }
 
     private data class Salvage(val narration: String, val choices: List<Choice>)

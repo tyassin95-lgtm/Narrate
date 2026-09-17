@@ -14,7 +14,10 @@ class AnthropicProvider(private val baseUrl: String = "https://api.anthropic.com
         val payload = buildJsonObject {
             put("model", request.model)
             put("max_tokens", request.maxTokens)
-            put("temperature", request.temperature)
+            // Claude's ceiling is 1.0, and it rejects the whole request rather than clamping.
+            // The narration slider and the creation prompts both go higher, so a player on
+            // Claude would otherwise be unable to generate a world at all.
+            put("temperature", request.temperature.coerceIn(0.0, 1.0))
             if (request.system.isNotBlank()) put("system", request.system)
             put("messages", buildJsonArray {
                 // Claude requires strictly alternating roles starting with user.

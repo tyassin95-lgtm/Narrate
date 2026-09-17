@@ -115,7 +115,12 @@ object MarkupParser {
         return tail.last() !in sentenceEnders
     }
 
-    private val sentenceEnders = setOf('.', '!', '?', '"', ':', ';', ')', ']', '*', '_')
+    // The typographic marks belong here for the same reason the straight ones do: a wrapped
+    // line that ends on a closing curly quote has finished its sentence.
+    private val sentenceEnders = setOf(
+        '.', '!', '?', '"', ':', ';', ')', ']', '*', '_',
+        '\u201d', '\u2019', '\u00bb', '\u2026'
+    )
 
     private const val WRAP_WIDTH = 60
 

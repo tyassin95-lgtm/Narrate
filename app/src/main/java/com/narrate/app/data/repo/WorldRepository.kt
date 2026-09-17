@@ -189,9 +189,17 @@ class WorldRepository(context: Context) {
         imageDao.delete(image.id)
     }
 
-    /** Rewind: drop every turn from [fromIndex] on so the player can retry a moment. */
+    /**
+     * Rewind: drop every turn from [fromIndex] on so the player can retry a moment.
+     *
+     * What those turns recorded goes with them. A memory of something that no longer happened
+     * would be quoted back to the narrator as established fact, which is precisely the kind of
+     * contradiction the rest of the app exists to prevent.
+     */
     suspend fun rewindTo(worldId: String, fromIndex: Int) {
         turnDao.deleteFrom(worldId, fromIndex)
+        memoryDao.deleteFrom(worldId, fromIndex)
+        issueDao.deleteFrom(worldId, fromIndex)
         val world = worldDao.get(worldId) ?: return
         worldDao.upsert(world.copy(turnCount = fromIndex, updatedAt = System.currentTimeMillis()))
     }

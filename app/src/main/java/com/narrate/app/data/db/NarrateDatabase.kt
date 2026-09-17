@@ -28,7 +28,9 @@ import com.narrate.app.data.entity.*
         UsageEntity::class
     ],
     version = 4,
-    exportSchema = false
+    // The schema is written to app/schemas on every build. Version 5 will need a migration,
+    // and a migration is only as good as the record of what it is migrating from.
+    exportSchema = true
 )
 abstract class NarrateDatabase : RoomDatabase() {
     abstract fun worldDao(): WorldDao

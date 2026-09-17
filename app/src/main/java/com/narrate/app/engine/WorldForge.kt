@@ -515,8 +515,30 @@ class WorldForge(
         val facts: List<MemoryDelta>
     )
 
-    /** Commits a built world to disk as a save the player can leave and come back to. */
+    /**
+     * Commits a built world to disk as a save the player can leave and come back to.
+     *
+     * Once the first row is written the rest must follow. A world half-written - saved, but
+     * with no protagonist and no map - would sit on the shelf looking playable and open onto
+     * nothing, so leaving the screen mid-write finishes the write rather than abandoning it.
+     */
     suspend fun persist(
+        concept: WorldConcept,
+        customPrompt: String,
+        narrationLength: String,
+        contentGuidelines: String,
+        character: CharacterConcept,
+        characterPrompt: String,
+        build: WorldBuildOutcome?,
+        playStyle: PlayStyle = PlayStyle.BALANCED
+    ): WorldEntity = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+        writeWorld(
+            concept, customPrompt, narrationLength, contentGuidelines,
+            character, characterPrompt, build, playStyle
+        )
+    }
+
+    private suspend fun writeWorld(
         concept: WorldConcept,
         customPrompt: String,
         narrationLength: String,

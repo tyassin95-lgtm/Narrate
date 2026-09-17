@@ -217,10 +217,13 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 214 tests covering parsing, continuity, canon, imagery, cost and persistence
+./gradlew testDebugUnitTest         # 229 tests covering parsing, continuity, canon, imagery, cost and persistence
 ```
 
-Without a keystore the release APK is signed with the debug key so it still installs.
+Keep the keystore. Android identifies an app by its signing key, so a release built with a
+different key will not install over one already on the device - it has to be uninstalled first.
+`generate-keystore.sh` makes one if there is none; without any keystore the release APK falls
+back to the debug key, which is fine for trying it out and not fine for shipping.
 Install with `adb install -r app/build/outputs/apk/release/app-release.apk`, or copy the APK to
 a device and open it.
 
@@ -281,7 +284,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 214 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 229 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
@@ -320,3 +323,15 @@ that merely retells it is dropped rather than left waiting for a scene the playe
 A tenth covers creation completeness: a reply cut off mid-object keeps the fields that arrived,
 the fields the model dropped are asked for on their own and merged in, and nothing already
 written — least of all anything the player wrote — is overwritten by that top-up.
+
+Two more came out of a pre-release audit of the whole app rather than a reported bug. One runs
+each provider against a real socket and reads the bytes that leave the app: a reasoning model
+must get `max_completion_tokens` and no `temperature`, an older one must get the opposite, a
+provider that objects to a parameter must be answered rather than given up on, Claude must never
+be sent the 1.05 that world generation asks for (its ceiling is 1.0, and it rejects the whole
+request), Gemini must never be sent an empty conversation, and a cancelled generation must hang
+up instead of running on at the player's expense. The other covers the save itself: a world is
+never left half-written when the player walks away mid-creation, a rewind forgets what the turns
+it removed had established, deleting a world takes its pictures off the disk with it, and a real
+database upgraded from the previous schema version is opened and validated by Room itself - the
+check that would have caught a bad migration before it crashed every existing install.

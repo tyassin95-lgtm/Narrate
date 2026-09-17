@@ -134,4 +134,16 @@ class MarkupTest {
         val styled = inlineStyled("He said something about the 6\" pipe and left it at that.")
         assertTrue(styled.spanStyles.none { it.item.color == NarrateColors.Gold })
     }
+
+    @Test
+    fun `dialogue in typographic quotes is not glued to the paragraph after it`() {
+        val markup = """
+            \u201cYou are late,\u201d she said, and she did not look up from the ledger she was
+            marking, which was the whole of the welcome he was going to get tonight.
+            He put the keys down where she could see them.
+        """.trimIndent()
+        val prose = MarkupParser.parse(markup).filterIsInstance<Block.Prose>()
+        assertEquals("a wrapped line that closed its quote has finished", 2, prose.size)
+        assertTrue(prose[1].text.startsWith("He put the keys down"))
+    }
 }

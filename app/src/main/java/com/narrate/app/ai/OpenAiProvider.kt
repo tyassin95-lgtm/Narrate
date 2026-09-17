@@ -16,23 +16,71 @@ class OpenAiProvider(private val baseUrl: String = "https://api.openai.com/v1") 
 
     override val id = ProviderId.OPENAI
 
-    override suspend fun chat(request: LlmRequest, apiKey: String): LlmResponse =
-        try {
-            send(request, apiKey, includeReasoningEffort = request.reasoningEffort != null)
-        } catch (e: ProviderException) {
-            // Not every model in the family accepts the parameter. If that is the only
-            // objection, send the same request without it rather than failing the turn.
-            if (request.reasoningEffort != null && e.message?.contains("reasoning_effort") == true) {
-                send(request, apiKey, includeReasoningEffort = false)
-            } else {
-                throw e
+    /**
+     * How this model wants its request written.
+     *
+     * OpenAI changed the parameter names with the reasoning families, and the newer ones
+     * reject the older spelling outright. Guessing from the model id gets it right for
+     * everything known today; the retry below gets it right for everything else, because a
+     * model the app has never heard of must not be a model the app cannot talk to.
+     */
+    private data class Shape(
+        val completionTokens: Boolean,
+        val temperature: Boolean,
+        val reasoning: Boolean
+    )
+
+    override suspend fun chat(request: LlmRequest, apiKey: String): LlmResponse {
+        var shape = Shape(
+            completionTokens = usesCompletionTokens(request.model),
+            temperature = !usesCompletionTokens(request.model),
+            reasoning = request.reasoningEffort != null
+        )
+        var lastFailure: ProviderException? = null
+        repeat(MAX_SHAPE_ATTEMPTS) {
+            try {
+                return send(request, apiKey, shape)
+            } catch (e: ProviderException) {
+                // Only an objection to a parameter is worth another attempt. Anything else -
+                // a bad key, a rate limit, a model that does not exist - is the real answer.
+                val adapted = adapt(shape, e.message.orEmpty()) ?: throw e
+                lastFailure = e
+                shape = adapted
             }
         }
+        throw lastFailure ?: ProviderException(id, "The request could not be shaped for ${request.model}.")
+    }
+
+    /**
+     * True for the families that take `max_completion_tokens` and refuse `temperature`:
+     * the o-series, and gpt-5 and everything after it.
+     */
+    private fun usesCompletionTokens(model: String): Boolean {
+        if (Regex("^o\\d").containsMatchIn(model)) return true
+        val generation = Regex("^gpt-(\\d+)").find(model)?.groupValues?.get(1)?.toIntOrNull()
+        return generation != null && generation >= 5
+    }
+
+    /** The same request, written the way the provider's own complaint asks for. */
+    private fun adapt(shape: Shape, message: String): Shape? {
+        val complaint = message.lowercase()
+        val fixed = when {
+            !shape.completionTokens && complaint.contains("max_completion_tokens") ->
+                shape.copy(completionTokens = true, temperature = false)
+            shape.completionTokens && complaint.contains("max_tokens") &&
+                !complaint.contains("max_completion_tokens") ->
+                shape.copy(completionTokens = false, temperature = true)
+            shape.temperature && complaint.contains("temperature") -> shape.copy(temperature = false)
+            shape.reasoning && complaint.contains("reasoning_effort") -> shape.copy(reasoning = false)
+            else -> null
+        }
+        return fixed?.takeIf { it != shape }
+    }
 
     private suspend fun send(
         request: LlmRequest,
         apiKey: String,
-        includeReasoningEffort: Boolean
+        shape: Shape
     ): LlmResponse {
         requireKey(apiKey)
         val messages = buildJsonArray {
@@ -49,19 +97,17 @@ class OpenAiProvider(private val baseUrl: String = "https://api.openai.com/v1") 
                 })
             }
         }
-        val usesMaxCompletionTokens = request.model.startsWith("gpt-5") ||
-            request.model.startsWith("o1") || request.model.startsWith("o3") || request.model.startsWith("o4")
         val payload = buildJsonObject {
             put("model", request.model)
             put("messages", messages)
-            if (usesMaxCompletionTokens) {
+            if (shape.completionTokens) {
                 put("max_completion_tokens", request.maxTokens)
-                if (includeReasoningEffort && request.reasoningEffort != null) {
-                    put("reasoning_effort", request.reasoningEffort)
-                }
             } else {
                 put("max_tokens", request.maxTokens)
-                put("temperature", request.temperature)
+            }
+            if (shape.temperature) put("temperature", request.temperature)
+            if (shape.reasoning && request.reasoningEffort != null) {
+                put("reasoning_effort", request.reasoningEffort)
             }
         }
         val body = Http.execute(
@@ -212,6 +258,8 @@ class OpenAiProvider(private val baseUrl: String = "https://api.openai.com/v1") 
     }
 
     private companion object {
+        /** One attempt per parameter the provider might object to, and no more. */
+        const val MAX_SHAPE_ATTEMPTS = 4
         const val MAX_PROMPT = 4000
         const val MAX_REFERENCES = 4
     }

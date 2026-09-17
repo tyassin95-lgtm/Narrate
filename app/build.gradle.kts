@@ -14,8 +14,8 @@ android {
         applicationId = "com.narrate.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 8
+        versionName = "1.8"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -26,6 +26,11 @@ android {
     signingConfigs {
         if (releaseKeystore.exists()) {
             create("release") {
+                // v2 is what installs on minSdk 26 and up; v3 additionally allows the signing
+                // key to be rotated later without every install having to be replaced.
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
                 storeFile = releaseKeystore
                 storePassword = System.getenv("NARRATE_KEYSTORE_PASSWORD") ?: "narrate"
                 keyAlias = System.getenv("NARRATE_KEY_ALIAS") ?: "narrate"

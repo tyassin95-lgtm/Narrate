@@ -245,6 +245,33 @@ class OpeningSceneTest {
     }
 
     @Test
+    fun `a first turn the player typed still opens on their scene`() = runBlocking {
+        val world = buildAndPersist()
+        scripted.prompts.clear()
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            The door swings and she comes in out of the rain.
+            ===CHOICES===
+            - "Here, let me take that."
+            ===STATE===
+            {"story_time": "Day 1, 3am", "summary": "A woman arrives."}
+            ===END===
+            """.trimIndent()
+        )
+
+        // The opening call failed - no signal, a bad key - and the player tried again by
+        // acting instead. Their scene must not be lost because of a network error.
+        val result = TurnDirector(repo, settings).take(world.id, "Hold the door open", "ACTION")
+        assertTrue(result.exceptionOrNull()?.message ?: "ok", result.isSuccess)
+
+        val prompt = scripted.prompts.first()
+        assertTrue("the opening is still where the story starts", prompt.contains(opening))
+        assertTrue(prompt.contains("THE SCENE THIS STORY BEGINS ON"))
+        assertTrue("and what they typed is part of it", prompt.contains("Hold the door open"))
+    }
+
+    @Test
     fun `a world with no opening of its own still gets a first turn`() = runBlocking {
         val world = forge.persist(
             concept = WorldConcept(name = "Eastgate Rotations", premise = "A teaching hospital."),

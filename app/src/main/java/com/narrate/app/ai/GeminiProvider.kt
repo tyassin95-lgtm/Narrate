@@ -15,9 +15,13 @@ class GeminiProvider(private val baseUrl: String = "https://generativelanguage.g
 
     override suspend fun chat(request: LlmRequest, apiKey: String): LlmResponse {
         if (apiKey.isBlank()) throw ProviderException(id, "No API key set. Add one in Settings.")
+        // Gemini rejects a request with no contents, so a turn whose messages are all blank
+        // still has to say something.
+        val spoken = request.messages.filter { it.content.isNotBlank() }
+            .ifEmpty { listOf(ChatMessage.user("Begin.")) }
         val payload = buildJsonObject {
             put("contents", buildJsonArray {
-                request.messages.filter { it.content.isNotBlank() }.forEach { message ->
+                spoken.forEach { message ->
                     add(buildJsonObject {
                         put("role", if (message.role == "assistant") "model" else "user")
                         put("parts", buildJsonArray {
