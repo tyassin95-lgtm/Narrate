@@ -107,11 +107,13 @@ class PlayViewModel(application: Application, private val worldId: String) : And
     }
 
     /**
-     * The full text of a suggestion, as it should appear in the input box for the player to
-     * read, edit or replace. Choices are prompts, not commitments.
+     * What goes into the input box when a suggestion is tapped: the player's action or their
+     * words, and nothing else.
+     *
+     * The trailing intent tag stays on screen as a hint but is never inserted. Sending it
+     * would put the narrator's own commentary into the player's mouth.
      */
-    fun choiceText(choice: Choice): String =
-        if (choice.detail.isBlank()) choice.label else "${choice.label} - ${choice.detail}"
+    fun choiceText(choice: Choice): String = choice.label.trim()
 
     /**
      * How a submission should be recorded.

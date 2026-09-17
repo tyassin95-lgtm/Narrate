@@ -420,13 +420,14 @@ object TurnParser {
                     else -> "ACTION"
                 }
                 val parts = line.split(" -- ", " | ", limit = 2)
-                Choice(
-                    id = "c$index",
-                    // Spoken options carry the line itself, so they need room to be a line.
-                    label = parts[0].trim().removeSurrounding("**").trim().take(320),
-                    detail = parts.getOrNull(1)?.trim().orEmpty().take(240),
-                    kind = kind
-                )
+                // What the player sends must be their action alone, with any predicted
+                // outcome the narrator tacked on removed before it can reach the input box.
+                val label = ChoiceSanitizer.clean(parts[0].trim().removeSurrounding("**").trim()).take(320)
+                val detail = parts.getOrNull(1)?.trim().orEmpty()
+                    .let(ChoiceSanitizer::clean)
+                    .let { if (ChoiceSanitizer.looksLikeCommentary(it)) "" else it }
+                    .take(160)
+                Choice(id = "c$index", label = label, detail = detail, kind = kind)
             }
             .toList()
     }
@@ -455,6 +456,60 @@ object TurnParser {
         }
         return null
     }
+
+    /**
+     * The same, but tolerant of a reply that was cut off mid-object.
+     *
+     * A generation that ran out of budget halfway through still contains everything the model
+     * wrote before it stopped. Throwing all of it away is how a world ends up with four of its
+     * nine fields filled for no reason the player can see, so the unfinished structure is closed
+     * and, if that still will not parse, walked back one field at a time until it does.
+     */
+    fun salvageJsonObject(text: String): String? {
+        extractJsonObject(text)?.let { return it }
+        val cleaned = text.replace("```json", "```")
+        val start = cleaned.indexOf('{')
+        if (start < 0) return null
+        var body = cleaned.substring(start).trimEnd()
+        repeat(MAX_SALVAGE_STEPS) {
+            val closed = closeOpenStructures(body)
+            if (closed != null && parsesAsObject(closed)) return closed
+            val cut = body.lastIndexOf(',')
+            if (cut <= 0) return null
+            body = body.substring(0, cut).trimEnd()
+        }
+        return null
+    }
+
+    /** Adds the quote and the brackets the model never got to write. */
+    private fun closeOpenStructures(body: String): String? {
+        val stack = ArrayDeque<Char>()
+        var inString = false
+        var escaped = false
+        for (char in body) {
+            when {
+                escaped -> escaped = false
+                char == '\\' && inString -> escaped = true
+                char == '"' -> inString = !inString
+                inString -> Unit
+                char == '{' -> stack.addLast('}')
+                char == '[' -> stack.addLast(']')
+                char == '}' || char == ']' -> stack.removeLastOrNull()
+            }
+        }
+        if (stack.isEmpty()) return null
+        val tail = buildString {
+            append(body)
+            if (escaped) setLength(length - 1)
+            if (inString) append('"')
+        }.trimEnd().trimEnd(',', ':')
+        return tail + stack.reversed().joinToString("")
+    }
+
+    private fun parsesAsObject(json: String): Boolean =
+        runCatching { AppJson.parseToJsonElement(json) as? JsonObject }.getOrNull() != null
+
+    private const val MAX_SALVAGE_STEPS = 24
 
     /** Trailing commas and stray comments are the two mistakes models make most often. */
     private fun repairJson(json: String): String = json

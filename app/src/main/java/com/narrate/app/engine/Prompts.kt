@@ -250,15 +250,26 @@ object Prompts {
            is still the player's - never write the player asking to give it back to them or
            treating it as theirs.
 
-        5. NEVER CONFUSE WHO IS WHO. Every option is something the player does or says. Never
+        5. AN OPTION IS THE PLAYER'S MOVE, NOT ITS RESULT. Write only what the player does or
+           says. Never add what it will achieve, how anyone will react, what it will reveal, or
+           what happens next - that is yours to decide when they choose it, and writing it down
+           in advance hands the player a script for you to follow.
+             Write:   "You look frozen. Take the jacket, I'm two streets from home."
+             Not:     Offer her your jacket, making her trust you and open up about why she is lost.
+             Write:   Ask where she is coming from
+             Not:     Ask where she is coming from, which will reveal that she has been walking for hours
+           No parenthetical asides, no notes to yourself, no promises about the outcome.
+
+        6. NEVER CONFUSE WHO IS WHO. Every option is something the player does or says. Never
            write an option in which the player is spoken to, described from outside, or referred
            to by name as though they were someone else in the room, and never write an option
            that belongs to an NPC's point of view. If an NPC did something, the option is the
            player's response to it.
 
-        Format: one option per line, no numbering needed. A short trailing clause after " -- "
-        may say what the player is going for, if it is not obvious:
-          "I'm not going anywhere until you tell me what happened." -- refuse to be put off
+        Format: one option per line, no numbering needed. Two to four words of intent may follow
+        a " -- " when the approach is not obvious from the line itself. That tag names the
+        player's attitude; it never predicts what happens:
+          "I'm not going anywhere until you tell me what happened." -- refusing to be put off
           Offer her the blanket from your bag and say nothing
           Wait, and let the silence do the work
 
@@ -311,19 +322,54 @@ object Prompts {
     /** The opening turn: establish the scene rather than react to an action. */
     fun openingInstruction(world: WorldEntity): String {
         val style = PlayStyle.from(world.playStyle)
-        return """
-            This is the opening of the world. There is no previous turn.
-
-            Establish the player exactly where the state file places them, at the story time given.
-            Ground the scene in specific sensory detail and introduce whoever is present. Do not
-            summarise the premise back at them - dramatise the first moment of it. Do not skip ahead in
-            time, and do not resolve anything yet.
-
-            ${style.openingGuidance}
-
-            In the state block, record the opening situation as memories and threads so the world
-            remembers how it began.
-        """.trimIndent()
+        val opening = world.openingNarration.trim()
+        return buildString {
+            appendLine("This is the opening of the world. There is no previous turn.")
+            appendLine()
+            if (opening.isNotBlank()) {
+                // The opening the player asked for is where the story starts. Not a hook to
+                // work towards, not something to be mentioned later - the first scene itself.
+                appendLine("## THE SCENE THIS STORY BEGINS ON")
+                appendLine("<<<")
+                appendLine(opening)
+                appendLine(">>>")
+                appendLine()
+                appendLine(
+                    "That is the first scene. Begin exactly there, at that moment, in that place, " +
+                        "with the people it names. Every concrete detail in it is already true and " +
+                        "must appear: the location, who is present, what is happening, what has just " +
+                        "happened. Do not open somewhere else and work towards it, do not begin " +
+                        "earlier or later, and do not treat it as something the player will discover " +
+                        "in a few turns. Write it as it is happening now."
+                )
+                appendLine()
+                appendLine(
+                    "You may expand it freely - the weather, the hour, what the place smells like, " +
+                        "what the people are doing with their hands - as long as nothing you add " +
+                        "contradicts or replaces it."
+                )
+                appendLine()
+            } else {
+                appendLine(
+                    "Establish the player exactly where the state file places them, at the story " +
+                        "time given."
+                )
+                appendLine()
+            }
+            appendLine(
+                "Ground the scene in specific sensory detail and introduce whoever is present. Do " +
+                    "not summarise the premise back at them - dramatise the first moment of it. Do " +
+                    "not skip ahead in time, and do not resolve anything yet."
+            )
+            appendLine()
+            appendLine(style.openingGuidance)
+            appendLine()
+            appendLine(
+                "In the state block, record what this opening establishes as memories, so the world " +
+                    "remembers how it began. Do not file the opening itself as a thread - it is not " +
+                    "something still to come, it is what just happened."
+            )
+        }
     }
 
     /**

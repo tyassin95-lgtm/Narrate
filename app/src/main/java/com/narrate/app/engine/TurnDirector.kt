@@ -125,7 +125,14 @@ class TurnDirector(
             )
         }
 
-        val applied = applier.apply(snapshot, parsed.delta, turnIndex, parsed.narration)
+        // The opening scene has already happened by the time it is narrated, so a thread that
+        // just retells it would leave the world waiting for something it is standing in.
+        val delta = if (turnIndex == 0) {
+            OpeningScene.withoutOpeningThreads(parsed.delta, snapshot.world.openingNarration)
+        } else {
+            parsed.delta
+        }
+        val applied = applier.apply(snapshot, delta, turnIndex, parsed.narration)
 
         if (!parsed.stateParsed && parsed.narration.isNotBlank()) {
             repo.saveIssues(

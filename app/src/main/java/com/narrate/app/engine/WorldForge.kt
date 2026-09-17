@@ -10,6 +10,7 @@ import com.narrate.app.core.AppJson
 import com.narrate.app.core.nameSimilarity
 import com.narrate.app.core.newId
 import com.narrate.app.data.entity.*
+import com.narrate.app.data.entity.LocationEntity
 import com.narrate.app.data.prefs.SettingsStore
 import com.narrate.app.data.repo.WorldRepository
 import kotlinx.serialization.SerialName
@@ -113,6 +114,122 @@ class WorldForge(
         return response.text
     }
 
+    /**
+     * Asks for one JSON object and insists on getting something usable back.
+     *
+     * Three things go wrong here in practice: the model wraps its answer in prose, it runs out
+     * of room mid-object, or it writes nothing at all. The first two are recoverable from the
+     * text already in hand; only the third needs asking again, with real room the second time.
+     */
+    private suspend fun askObject(
+        system: String,
+        user: String,
+        maxTokens: Int = 4000,
+        temperature: Double = 1.0,
+        worldId: String = ""
+    ): String {
+        val raw = ask(system, user, maxTokens, temperature, worldId)
+        TurnParser.salvageJsonObject(raw)?.let { return it }
+        // Nothing parseable came back at all, which usually means the reply was cut off before
+        // the first brace. One retry with a doubled budget, then the caller is told honestly.
+        val retry = ask(system, user, (maxTokens * 2).coerceAtMost(MAX_CREATION_TOKENS), temperature, worldId)
+        return TurnParser.salvageJsonObject(retry)
+            ?: throw IllegalStateException("The model did not return a usable answer.")
+    }
+
+    /**
+     * Fills in whatever the world generation left blank.
+     *
+     * A model asked for nine fields sometimes answers with seven, and which two it drops varies
+     * from run to run - which is exactly the randomness the player sees. The gaps are named and
+     * asked for on their own, and merged in without touching a field that already has a value,
+     * so nothing the player wrote and nothing already generated can be overwritten here.
+     */
+    suspend fun completeWorld(
+        concept: WorldConcept,
+        authored: String,
+        playStyle: PlayStyle = PlayStyle.BALANCED
+    ): WorldConcept {
+        val missing = ConceptCompleteness.missingWorldFields(concept)
+        if (missing.isEmpty()) return concept
+        val patch = runCatching {
+            val json = askObject(
+                system = "You complete a partly written world bible. You fill only the gaps you are " +
+                    "asked for, you never contradict what is already written, and you reply with JSON only.",
+                user = """
+                    ${AuthoredCanon.brief("THE PLAYER'S OWN WORLD TEXT", authored)}
+
+                    THE WORLD SO FAR - all of this is settled canon and may not be changed:
+                    ${ConceptCompleteness.describeWorld(concept)}
+
+                    These fields were left empty: ${missing.joinToString(", ")}
+
+                    Write only those fields, inferred from the world above and the player's text.
+                    Each must be consistent with everything already written and specific to this
+                    world - never a generic line that would fit any story. Do not restate another
+                    field, and do not write filler simply to fill a space.
+
+                    The experience the player asked for is ${playStyle.label}: ${playStyle.blurb}
+
+                    Reply with ONE JSON object containing exactly these keys: ${missing.joinToString(", ")}
+                """.trimIndent(),
+                maxTokens = 2000,
+                temperature = 0.5
+            )
+            AppJson.decodeFromString(WorldConcept.serializer(), json)
+        }.getOrElse { failure ->
+            // Being cancelled is the player leaving, not a failure to absorb.
+            if (failure is kotlinx.coroutines.CancellationException) throw failure
+            // A failed top-up is not a failed world: what was generated still stands.
+            return concept
+        }
+        return ConceptCompleteness.mergeWorld(concept, AuthoredCanon.enforceWorld(authored, patch).first)
+    }
+
+    /** The same top-up for a character. */
+    suspend fun completeCharacter(
+        concept: CharacterConcept,
+        world: WorldEntity,
+        authored: String
+    ): CharacterConcept {
+        val missing = ConceptCompleteness.missingCharacterFields(concept)
+        if (missing.isEmpty()) return concept
+        val patch = runCatching {
+            val json = askObject(
+                system = "You complete a partly written character sheet. You fill only the gaps you " +
+                    "are asked for, you never contradict what is already written, and you reply with JSON only.",
+                user = """
+                    ${AuthoredCanon.brief("THE PLAYER'S OWN CHARACTER TEXT", authored)}
+
+                    THE CHARACTER SO FAR - all of this is settled canon and may not be changed:
+                    ${ConceptCompleteness.describeCharacter(concept)}
+
+                    THE WORLD THEY LIVE IN
+                    ${world.name}. ${world.genre}. ${world.tone}
+                    ${world.premise}
+                    ${world.rules.takeIf { it.isNotBlank() }?.let { "Rules: " + it }.orEmpty()}
+
+                    These fields were left empty: ${missing.joinToString(", ")}
+
+                    Write only those fields, inferred from the character above, their world, and
+                    the player's text. Keep them modest and consistent: do not invent a dramatic
+                    past, a secret or a fear that contradicts anything already written, and do not
+                    write filler simply to fill a space.
+                    ${if ("appearance" in missing) "\"appearance\" becomes this character's permanent visual reference, so describe face, build, hair, colouring and age concretely." else ""}
+
+                    Reply with ONE JSON object containing exactly these keys: ${missing.joinToString(", ")}
+                """.trimIndent(),
+                maxTokens = 2000,
+                temperature = 0.5
+            )
+            AppJson.decodeFromString(CharacterConcept.serializer(), json)
+        }.getOrElse { failure ->
+            if (failure is kotlinx.coroutines.CancellationException) throw failure
+            return concept
+        }
+        return ConceptCompleteness.mergeCharacter(concept, AuthoredCanon.enforceCharacter(authored, patch).first)
+    }
+
     /** Several distinct starting points for a world, shaped by whatever the player typed. */
     suspend fun worldConcepts(
         direction: String,
@@ -204,10 +321,10 @@ class WorldForge(
                 """.trimIndent(),
                 temperature = 0.4
             )
-            val json = TurnParser.extractJsonObject(raw)
+            val json = TurnParser.salvageJsonObject(raw)
                 ?: throw IllegalStateException("The model did not return a usable character.")
             val concept = AppJson.decodeFromString(CharacterConcept.serializer(), json)
-            AuthoredCanon.enforceCharacter(authored, concept).first
+            completeCharacter(AuthoredCanon.enforceCharacter(authored, concept).first, world, authored)
         }
 
     /**
@@ -234,6 +351,9 @@ class WorldForge(
                 - Fill only what they left empty, and keep those additions compatible with
                   everything they did say.
                 - "name" is the name they gave the world. Only invent a title if they gave none.
+                - If they described where or how the story starts - an arrival, a meeting, a place,
+                  a moment - that is "opening_situation", copied faithfully with its details intact.
+                  It is the first scene, not a future event, and must not be rewritten into one.
 
                 The experience they asked for is ${playStyle.label}: ${playStyle.blurb}
                 ${playStyle.buildGuidance}
@@ -247,10 +367,10 @@ class WorldForge(
             """.trimIndent(),
             temperature = 0.4
         )
-        val json = TurnParser.extractJsonObject(raw)
+        val json = TurnParser.salvageJsonObject(raw)
             ?: throw IllegalStateException("The model did not return a usable world.")
         val concept = AppJson.decodeFromString(WorldConcept.serializer(), json)
-        AuthoredCanon.enforceWorld(authored, concept).first
+        completeWorld(AuthoredCanon.enforceWorld(authored, concept).first, authored, playStyle)
     }
 
     /** Character concepts that already have hooks into this specific world. */
@@ -329,7 +449,13 @@ class WorldForge(
                     History: ${concept.history}
                     Rules: ${concept.rules}
                     Themes: ${concept.themes}
-                    Opening situation: ${concept.openingSituation}
+                    THE FIRST SCENE - this is where the story opens, and it is happening now:
+                    ${concept.openingSituation}
+
+                    Everything that scene names must exist in what you produce: the place it happens
+                    in, the people in it, anything it refers to. "starting_location" must be the place
+                    it happens. Do not turn it into a thread - a thread is something still to come, and
+                    this has already begun. Do not invent a different starting point.
 
                     THE PROTAGONIST - this person already exists and is the player. Never rename them,
                     never create another character with their name, and never cast them as an NPC.
@@ -372,7 +498,7 @@ class WorldForge(
                 maxTokens = 12_000,
                 temperature = 0.95
             )
-            val json = TurnParser.extractJsonObject(raw)
+            val json = TurnParser.salvageJsonObject(raw)
                 ?: throw IllegalStateException("The world builder returned no readable JSON.")
             val build = AppJson.decodeFromString(WorldBuild.serializer(), json)
             WorldBuildOutcome(concept, build.locations, build.characters, build.factions, build.threads, build.startingLocation, build.startingTime, build.establishedFacts)
@@ -471,7 +597,11 @@ class WorldForge(
         }
         if (links.isNotEmpty()) repo.saveLinks(links)
 
-        val startId = locationIds[build?.startingLocation?.trim()?.lowercase()]
+        val startId = startingLocation(
+            opening = enforcedWorld.openingSituation,
+            declared = locationIds[build?.startingLocation?.trim()?.lowercase()],
+            locations = withParents
+        )
             ?: withParents.firstOrNull { it.type == "ROOM" || it.type == "BUILDING" }?.id
             ?: withParents.firstOrNull()?.id
 
@@ -567,7 +697,13 @@ class WorldForge(
             )
         }?.takeIf { it.isNotEmpty() }?.let { repo.saveFactions(it) }
 
-        build?.threads?.filter { it.title.isNotBlank() }?.map { incoming ->
+        build?.threads
+            ?.filter { it.title.isNotBlank() }
+            // The opening is not a thread. A thread is something still to come, and the opening
+            // has already happened - filing it as one is how a stated first scene got replaced
+            // by a different beginning and stored as a loose plot to reach later.
+            ?.filterNot { OpeningScene.restatesOpening(it, enforcedWorld.openingSituation) }
+            ?.map { incoming ->
             ThreadEntity(
                 id = newId(), worldId = worldId, title = incoming.title.trim(),
                 description = incoming.description, status = incoming.status.uppercase().ifBlank { "ACTIVE" },
@@ -592,6 +728,15 @@ class WorldForge(
                 id = newId(), worldId = worldId, kind = "CANON",
                 text = "The player wrote this world themselves, and it is fact: $customPrompt",
                 importance = 5, keywords = MemoryIndex.keywords(customPrompt).joinToString(" "),
+                storyTime = world.storyTime, turnIndex = 0, pinned = true
+            )
+        }
+        if (enforcedWorld.openingSituation.isNotBlank()) {
+            facts += MemoryEntity(
+                id = newId(), worldId = worldId, kind = "CANON",
+                text = "This world opened on: ${enforcedWorld.openingSituation}",
+                importance = 5,
+                keywords = MemoryIndex.keywords(enforcedWorld.openingSituation).joinToString(" "),
                 storyTime = world.storyTime, turnIndex = 0, pinned = true
             )
         }
@@ -626,6 +771,29 @@ class WorldForge(
         const val MAX_CREATION_TOKENS = 32_000
     }
 
+    /**
+     * Where the story actually opens.
+     *
+     * The builder is asked to name the starting location, but it sometimes names somewhere
+     * else entirely. When the opening scene plainly happens in a place that exists, that place
+     * wins - the player said where their story begins.
+     */
+    private fun startingLocation(
+        opening: String,
+        declared: String?,
+        locations: List<LocationEntity>
+    ): String? {
+        if (opening.isBlank()) return declared
+        val named = locations.filter { location ->
+            location.name.length >= 3 &&
+                Regex("\\b${Regex.escape(location.name.lowercase())}\\b").containsMatchIn(opening.lowercase())
+        }
+        if (named.isEmpty()) return declared
+        if (declared != null && named.any { it.id == declared }) return declared
+        // The most specific place mentioned: a ward inside a hospital, not the hospital.
+        return named.maxByOrNull { it.name.length }?.id ?: declared
+    }
+
     private fun <T> parseList(raw: String, serializer: kotlinx.serialization.KSerializer<T>): List<T> {
         val start = raw.indexOf('[')
         val end = raw.lastIndexOf(']')
@@ -634,10 +802,28 @@ class WorldForge(
                 return AppJson.decodeFromString(ListSerializer(serializer), raw.substring(start, end + 1))
             }
         }
-        // A single object is an acceptable answer too.
-        TurnParser.extractJsonObject(raw)?.let { json ->
-            runCatching { return listOf(AppJson.decodeFromString(serializer, json)) }
+        // An array that was cut off still holds every suggestion the model finished writing, so
+        // they are read out one at a time rather than lost with the one it never completed.
+        val salvaged = objectsIn(raw).mapNotNull { json ->
+            runCatching { AppJson.decodeFromString(serializer, json) }.getOrNull()
         }
+        if (salvaged.isNotEmpty()) return salvaged
         throw IllegalStateException("The model did not return usable JSON.")
+    }
+
+    /** Every complete JSON object in a reply, plus the half-written last one if it can be closed. */
+    private fun objectsIn(raw: String): List<String> = buildList {
+        var cursor = raw.indexOf('{')
+        while (cursor >= 0) {
+            val rest = raw.substring(cursor)
+            val complete = TurnParser.extractJsonObject(rest)
+            if (complete != null) {
+                add(complete)
+                cursor = raw.indexOf('{', cursor + complete.length)
+            } else {
+                TurnParser.salvageJsonObject(rest)?.let { add(it) }
+                return@buildList
+            }
+        }
     }
 }

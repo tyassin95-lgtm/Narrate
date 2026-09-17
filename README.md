@@ -47,6 +47,11 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
   the question just asked, the person shivering in front of you, what is in your hands - with
   spoken options written out as the words you would say. They are checked against the world
   before you see them, and tapping one loads it into the input box to edit rather than sending it.
+  An option is only ever your move - never what it will achieve, how anyone will react, or what
+  it will reveal. That stays the narrator's to decide once you have chosen.
+- **Your opening is the opening.** If you write the scene your story starts on, that is the first
+  scene: the world is built around it, it starts in the place it names, and it is pinned as canon
+  from turn one rather than filed away as something that might happen later.
 
 ---
 
@@ -212,7 +217,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 183 tests covering parsing, continuity, canon, imagery, cost and persistence
+./gradlew testDebugUnitTest         # 214 tests covering parsing, continuity, canon, imagery, cost and persistence
 ```
 
 Without a keystore the release APK is signed with the debug key so it still installs.
@@ -276,7 +281,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 183 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 214 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
@@ -306,3 +311,12 @@ subject's next surviving picture. A sixth covers what an object is: a textbook m
 owner's face, a badge must carry it, and a badge must be allowed the writing that makes it a badge.
 A seventh covers suggested actions, including the reported case: a jacket lent to an NPC stays the
 player's, and the option offering to give it back to her never reaches the screen.
+An eighth covers what a suggestion may contain: "offer your jacket, making her trust you and
+causing her to open up" loads into the input box as the offer alone, because the prediction was
+the narrator's to make and sending it back would have been the player scripting the reply.
+A ninth covers the opening scene a player writes: it is saved as the world's first scene, the
+story starts in the place it names even when the builder declared somewhere else, and a thread
+that merely retells it is dropped rather than left waiting for a scene the player is standing in.
+A tenth covers creation completeness: a reply cut off mid-object keeps the fields that arrived,
+the fields the model dropped are asked for on their own and merged in, and nothing already
+written — least of all anything the player wrote — is overwritten by that top-up.

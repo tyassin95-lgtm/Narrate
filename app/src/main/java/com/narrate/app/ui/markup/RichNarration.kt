@@ -85,7 +85,10 @@ fun inlineStyled(text: String): AnnotatedString = buildAnnotatedString {
     var index = 0
     val bold = Regex("\\*\\*(.+?)\\*\\*")
     val italic = Regex("(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)")
-    val quote = Regex("\"([^\"]{1,400})\"")
+    // Models type their dialogue with whichever quotation marks they feel like, and a
+    // typographic pair is still speech. Matching only the straight pair is what quietly
+    // turned spoken lines back into ordinary narration.
+    val quote = Regex("[\"\u201c\u201f]([^\"\u201c\u201d\u201f]{1,400})[\"\u201d\u201f]")
 
     data class Mark(val range: IntRange, val style: SpanStyle, val content: String)
 
@@ -103,7 +106,8 @@ fun inlineStyled(text: String): AnnotatedString = buildAnnotatedString {
             marks += Mark(
                 match.range,
                 SpanStyle(color = NarrateColors.Gold, fontWeight = FontWeight.Medium),
-                "\"" + match.groupValues[1] + "\""
+                // Keep the marks the author used, rather than normalising them to straight ones.
+                match.value
             )
         }
     }

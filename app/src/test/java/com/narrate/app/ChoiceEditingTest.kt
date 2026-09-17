@@ -74,10 +74,9 @@ class ChoiceEditingTest {
 
     @Test
     fun `a choice becomes editable text rather than an instant submission`() {
-        assertEquals(
-            "\"You knew I would come.\" - test how much she has guessed",
-            viewModel.choiceText(spoken)
-        )
+        // The intent tag is a hint on the card, not something the player says. Only their
+        // own words and their own action are loaded for editing.
+        assertEquals("\"You knew I would come.\"", viewModel.choiceText(spoken))
         assertEquals("Ask her how long she has been waiting", viewModel.choiceText(plain))
     }
 

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.narrate.app.container
+import com.narrate.app.engine.ConceptCompleteness
 import com.narrate.app.engine.CharacterConcept
 import com.narrate.app.engine.PlayStyle
 import com.narrate.app.engine.WorldConcept
@@ -231,6 +232,10 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
     fun build() {
         update { it.copy(step = CreateStep.BUILDING) }
         generate("Drawing the map...") {
+            // Last chance to notice a field the generation dropped, or one the player skipped
+            // past. Filling it now means the world is built on a complete sheet rather than on
+            // whatever happened to come back, and anything already written is left alone.
+            fillRemainingGaps()
             val current = _state.value
             val build = container.worldForge.buildWorld(
                 concept = current.world,
@@ -274,7 +279,45 @@ class CreateViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Tops up any world or character field still empty when the player commits.
+     *
+     * This covers the paths that never went through an expansion at all: a suggestion the
+     * player picked, or a sheet they filled in by hand and left parts of blank. Failure here
+     * is not fatal - an incomplete world is still theirs to play.
+     */
+    private suspend fun fillRemainingGaps() {
+        val current = _state.value
+        val worldGaps = ConceptCompleteness.missingWorldFields(current.world)
+        val characterGaps = ConceptCompleteness.missingCharacterFields(current.character)
+        if (worldGaps.isEmpty() && characterGaps.isEmpty()) return
+        update { it.copy(buildingStage = "Filling in the details...") }
+        if (worldGaps.isNotEmpty()) {
+            val filled = runCatching {
+                container.worldForge.completeWorld(current.world, current.worldPrompt, current.playStyle)
+            }.rethrowCancellation()
+            if (filled != null) update { it.copy(world = filled) }
+        }
+        if (characterGaps.isNotEmpty()) {
+            val filled = runCatching {
+                container.worldForge.completeCharacter(
+                    _state.value.character,
+                    worldEntity(),
+                    _state.value.characterPrompt
+                )
+            }.rethrowCancellation()
+            if (filled != null) update { it.copy(character = filled) }
+        }
+    }
+
     private fun update(block: (CreateUiState) -> CreateUiState) {
         _state.value = block(_state.value)
     }
+}
+
+/** Swallowing a cancellation would keep a generation the player walked away from alive. */
+private fun <T> Result<T>.rethrowCancellation(): T? {
+    val failure = exceptionOrNull()
+    if (failure is kotlinx.coroutines.CancellationException) throw failure
+    return getOrNull()
 }

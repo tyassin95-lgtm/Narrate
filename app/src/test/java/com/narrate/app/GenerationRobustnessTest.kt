@@ -62,10 +62,12 @@ class GenerationRobustnessTest {
         override fun catalog() = listOf(ModelInfo("gpt-5.6-luna", ProviderId.OPENAI))
     }
 
+    // A complete answer, so these tests exercise the retry path rather than the gap-filling one.
     private val conceptJson = """
-        {"name": "Calder City", "genre": "Slice of life", "tone": "quiet",
-         "premise": "A teaching hospital.", "history": "", "rules": "", "themes": "",
-         "art_style": "", "opening_situation": "A night shift."}
+        {"name": "Calder City", "tagline": "Nights on the ward", "genre": "Slice of life",
+         "tone": "quiet", "premise": "A teaching hospital.", "history": "Founded in 1911.",
+         "rules": "No magic; medicine is ordinary.", "themes": "Care and exhaustion.",
+         "art_style": "Muted film still", "opening_situation": "A night shift."}
     """.trimIndent()
 
     @Before
@@ -141,7 +143,8 @@ class GenerationRobustnessTest {
 
     @Test
     fun `a failed build returns the player to their character instead of a permanent spinner`() {
-        scripted.enqueueFailure(ProviderException(ProviderId.OPENAI, "HTTP 500 - upstream error"))
+        // The provider is down, so the gap-filling pass fails first and the build after it.
+        repeat(3) { scripted.enqueueFailure(ProviderException(ProviderId.OPENAI, "HTTP 500 - upstream error")) }
         val viewModel = CreateViewModel(application)
         viewModel.setWorldPrompt("Calder City: a teaching hospital.")
         viewModel.editCharacter { it.copy(name = "Adrian Voss") }
