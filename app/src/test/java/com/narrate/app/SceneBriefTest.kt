@@ -94,13 +94,14 @@ class SceneBriefTest {
 
     @Test
     fun `the brief carries the question and asks for an answer among the options`() {
+        // A question that decides something stays the player's, and the options must answer it.
         val brief = SceneBrief.render(
-            snapshot(turns = listOf(turn("She looks up. \"Do you live around here?\""))),
+            snapshot(turns = listOf(turn("She looks up. \"Do you want to come up for a coffee?\""))),
             "", "ACTION"
         )
-        assertTrue(brief.contains("A QUESTION IS HANGING IN THE AIR"))
-        assertTrue(brief.contains("Do you live around here?"))
-        assertTrue(brief.contains("actually answering it"))
+        assertTrue(brief.contains("Do you want to come up for a coffee?"))
+        assertTrue(brief.contains("the player's to answer"))
+        assertTrue(brief.contains("written as the words they would say"))
     }
 
     @Test

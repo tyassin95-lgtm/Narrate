@@ -67,14 +67,20 @@ object SceneBrief {
                 appendLine("## HOW THE LAST TURN ENDED")
                 appendLine(closingMoment(lastTurn.narration))
                 appendLine()
-                openQuestion(lastTurn.narration)?.let { question ->
-                    appendLine("## A QUESTION IS HANGING IN THE AIR")
-                    appendLine("Someone asked: \"$question\"")
-                    appendLine(
-                        "One of the suggested actions must be ${player.name} actually answering it, " +
-                            "written as the words they would say."
-                    )
+                val triaged = PlayerVoice.render(snapshot, lastTurn.narration)
+                if (triaged.isNotBlank()) {
+                    append(triaged)
                     appendLine()
+                } else {
+                    openQuestion(lastTurn.narration)?.let { question ->
+                        appendLine("## A QUESTION IS HANGING IN THE AIR")
+                        appendLine("Someone asked: \"$question\"")
+                        appendLine(
+                            "One of the suggested actions must be ${player.name} actually answering it, " +
+                                "written as the words they would say."
+                        )
+                        appendLine()
+                    }
                 }
             }
 

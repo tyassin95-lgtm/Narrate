@@ -133,6 +133,10 @@ object WorldDigest {
         } else {
             appendLine("## PRESENT IN THIS LOCATION (only these characters can speak or act here right now)")
             present.forEach { appendLine(characterLine(it, snapshot)) }
+            SceneCompany.render(snapshot).takeIf { it.isNotBlank() }?.let {
+                appendLine()
+                append(it)
+            }
         }
 
         val nearby = snapshot.nearbyNpcs()

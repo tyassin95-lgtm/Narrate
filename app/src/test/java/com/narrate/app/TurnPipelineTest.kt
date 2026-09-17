@@ -533,9 +533,10 @@ class TurnPipelineTest {
         director.take(worldId, "Think about it", "ACTION")
 
         val prompt = scripted.prompts.first()
-        assertTrue(prompt.contains("A QUESTION IS HANGING IN THE AIR"))
+        assertTrue(prompt.contains("QUESTIONS PUT TO VALE"))
         assertTrue(prompt.contains("Do you always walk strangers home?"))
-        assertTrue(prompt.contains("actually answering it"))
+        assertTrue(prompt.contains("the player's to answer"))
+        assertTrue(prompt.contains("written as the words they would say"))
     }
 
     @Test
