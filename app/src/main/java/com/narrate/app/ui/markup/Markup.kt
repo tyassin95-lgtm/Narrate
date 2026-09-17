@@ -42,8 +42,69 @@ object MarkupParser {
     )
     private val attributePattern = Regex("(\\w+)\\s*=\\s*\"([^\"]*)\"")
 
-    fun parse(markup: String): List<Block> {
-        if (markup.isBlank()) return emptyList()
+    private val anyTag = Regex("\\[\\[\\s*(/?)\\s*(\\w+)([^\\]]*)]]", RegexOption.IGNORE_CASE)
+
+    /**
+     * Repairs the two ways a model gets a block wrong before anything tries to read it.
+     *
+     * It opens a message and then, instead of closing it, opens the same block again -
+     * `[[sms from="me"]] on my way [[sms from="me"]]` - or it opens one and never closes it at
+     * all. Both used to fall through the block pattern entirely, and the text was flattened
+     * into ordinary prose: the message the narrator wrote lost its phone.
+     */
+    fun repair(markup: String): String {
+        if (!markup.contains("[[")) return markup
+        val tags = anyTag.findAll(markup).toList()
+        if (tags.isEmpty()) return markup
+        val result = StringBuilder()
+        var cursor = 0
+        var openKind: String? = null
+
+        tags.forEach { tag ->
+            val closing = tag.groupValues[1] == "/"
+            val kind = tag.groupValues[2].lowercase()
+            if (CommKind.fromTag(kind) == null) return@forEach
+            // A block starts on its own line. A tag dropped into the middle of a sentence is a
+            // stray marker, not a message, and repairing it would turn half a sentence into a
+            // text message - so it is left to be stripped as the noise it is.
+            val startsLine = openKind != null || markup.take(tag.range.first).let {
+                it.isBlank() || it.trimEnd(' ', '\t').endsWith("\n")
+            }
+            if (!startsLine) return@forEach
+            result.append(markup, cursor, tag.range.first)
+            cursor = tag.range.last + 1
+            when {
+                closing && kind == openKind -> {
+                    openKind = null
+                    result.append(tag.value)
+                }
+                closing -> Unit // A closer for something that was never opened: drop it.
+                openKind == kind -> {
+                    // The same block opened twice: the second one is where the first ended.
+                    openKind = null
+                    result.append("[[/$kind]]")
+                }
+                openKind != null -> {
+                    // A different block opened inside an unclosed one. Close the old one first.
+                    result.append("[[/$openKind]]")
+                    openKind = kind
+                    result.append(tag.value)
+                }
+                else -> {
+                    openKind = kind
+                    result.append(tag.value)
+                }
+            }
+        }
+        result.append(markup, cursor, markup.length)
+        // Something still open at the end is closed where the text runs out.
+        openKind?.let { result.append("[[/$it]]") }
+        return result.toString()
+    }
+
+    fun parse(raw: String): List<Block> {
+        if (raw.isBlank()) return emptyList()
+        val markup = repair(raw)
         val blocks = mutableListOf<Block>()
         var cursor = 0
 

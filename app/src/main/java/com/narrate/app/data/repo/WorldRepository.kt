@@ -5,6 +5,7 @@ import com.narrate.app.core.newId
 import com.narrate.app.core.nameSimilarity
 import com.narrate.app.data.db.NarrateDatabase
 import com.narrate.app.data.entity.*
+import com.narrate.app.engine.PlaceIdentity
 import kotlinx.coroutines.flow.Flow
 import java.io.File
 
@@ -213,12 +214,17 @@ class WorldRepository(context: Context) {
             ?.takeIf { nameSimilarity(it.name, reference) >= 0.6 }
     }
 
+    /**
+     * Resolve a place by id or by name.
+     *
+     * Places are matched on the words that identify them rather than on general similarity:
+     * "Liv's apartment" and "Adrian's apartment" are two thirds alike and are not the same
+     * address, and treating them as one merged a real place away and moved whoever was in it.
+     */
     fun resolveLocation(locations: List<LocationEntity>, reference: String?): LocationEntity? {
         if (reference.isNullOrBlank()) return null
         locations.firstOrNull { it.id == reference }?.let { return it }
-        locations.firstOrNull { it.name.equals(reference, ignoreCase = true) }?.let { return it }
-        return locations.maxByOrNull { nameSimilarity(it.name, reference) }
-            ?.takeIf { nameSimilarity(it.name, reference) >= 0.6 }
+        return PlaceIdentity.match(reference, locations) { it.name }
     }
 
     fun resolveItem(items: List<ItemEntity>, reference: String?): ItemEntity? {

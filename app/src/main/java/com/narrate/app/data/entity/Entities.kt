@@ -90,6 +90,15 @@ data class CharacterEntity(
     val affinity: Int = 0,
     val trust: Int = 0,
     val relationshipToPlayer: String = "",
+    /**
+     * How the player can reach this person when they are not in the room, as a comma-separated
+     * list of channels (PHONE, EMAIL, SOCIAL, RADIO...).
+     *
+     * Empty means exactly what it says: there is no way to contact them and no thread with
+     * them to check. Knowing someone exists, hearing about them, even meeting them, does not
+     * put their number in the player's phone - only an exchange that happened on the page does.
+     */
+    val playerContact: String = "",
     val faction: String = "",
     val portraitImageId: String? = null,
     val tags: String = "",

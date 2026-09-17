@@ -27,7 +27,7 @@ import com.narrate.app.data.entity.*
         ContinuityIssueEntity::class,
         UsageEntity::class
     ],
-    version = 4,
+    version = 5,
     // The schema is written to app/schemas on every build. Version 5 will need a migration,
     // and a migration is only as good as the record of what it is migrating from.
     exportSchema = true
@@ -107,6 +107,19 @@ abstract class NarrateDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Records which people the player can actually contact remotely.
+         *
+         * Existing saves start with nobody reachable, which is the honest answer: the app was
+         * not tracking it before, so nothing about it was established. A number exchanged in an
+         * earlier scene is re-established the next time it comes up in play.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE characters ADD COLUMN playerContact TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun get(context: Context): NarrateDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
@@ -114,7 +127,7 @@ abstract class NarrateDatabase : RoomDatabase() {
                 "narrate.db"
             )
                 // A save is the player's world. Never destroy one on a routine upgrade.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
                 .also { instance = it }

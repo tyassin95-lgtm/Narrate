@@ -27,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.narrate.app.data.entity.ImageEntity
 import com.narrate.app.ui.components.*
+import com.narrate.app.engine.ContactChannels
 import com.narrate.app.ui.theme.NarrateColors
 import java.io.File
 
@@ -123,6 +124,20 @@ fun CharacterDetailScreen(
             InfoRow("Fears", character.fears)
             InfoRow("Secrets", character.secrets)
             InfoRow("Toward you", character.relationshipToPlayer)
+            if (!character.isPlayer) {
+                // Visible because it is world state, not a UI detail: whether this person can
+                // be reached at all is the difference between a thread existing and not.
+                InfoRow(
+                    "How you can reach them",
+                    if (character.playerContact.isBlank()) {
+                        "No contact details exchanged - you have no way to contact them."
+                    } else {
+                        ContactChannels.parse(character.playerContact)
+                            .joinToString(", ") { ContactChannels.describe(it) }
+                            .replaceFirstChar { it.uppercase() }
+                    }
+                )
+            }
             InfoRow("Faction", character.faction)
             InfoRow("Routine", character.routine)
             InfoRow("Knows", character.knowledge)

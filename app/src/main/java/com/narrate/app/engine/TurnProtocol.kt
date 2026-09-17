@@ -162,6 +162,22 @@ data class ThreadDelta(
     val deadline: String = ""
 )
 
+/**
+ * An exchange of contact details, recorded the turn it happens.
+ *
+ * Without this there is no way for the player to reach anyone, which is the point: a number
+ * exists in this world only once somebody has handed it over in a scene.
+ */
+@Serializable
+data class ContactDelta(
+    val character: String = "",
+    /** PHONE, EMAIL, SOCIAL, RADIO, LETTER - or the words the model used, which are normalised. */
+    val channel: String = "PHONE",
+    /** False when a channel is lost: a blocked number, a changed address, a burned phone. */
+    val established: Boolean = true,
+    val note: String = ""
+)
+
 /** A recorded change to how a subject looks, so future images stay right. */
 @Serializable
 data class VisualUpdate(
@@ -189,6 +205,8 @@ data class StateDelta(
     val memories: List<MemoryDelta> = emptyList(),
     val threads: List<ThreadDelta> = emptyList(),
     @SerialName("visual_updates") val visualUpdates: List<VisualUpdate> = emptyList(),
+    /** Contact details exchanged this turn, in either direction. */
+    val contacts: List<ContactDelta> = emptyList(),
     @SerialName("image_suggestion") val imageSuggestion: String? = null,
     /** Some models put the choices in the state block instead. Accepted rather than lost. */
     val choices: List<String> = emptyList()

@@ -45,6 +45,9 @@ object ChoiceSanitizer {
         RegexOption.IGNORE_CASE
     )
 
+    /** Any formatting block marker, opening or closing, complete or not. */
+    private val markupTag = Regex("\\[\\[/?\\s*\\w*[^\\]]*(?:]]|$)")
+
     /** Parenthetical stage directions aimed at the narrator rather than spoken aloud. */
     private val trailingAside = Regex("[\\s]*[(\\[][^)\\]]*[)\\]][\\s]*$")
 
@@ -62,6 +65,13 @@ object ChoiceSanitizer {
     fun clean(raw: String): String {
         var text = raw.trim()
         if (text.isEmpty()) return text
+
+        // Formatting markup in a suggestion is loaded straight into the player's input box,
+        // where "[[sms from=\"me\"]] on my way" is not something anyone would type. The words
+        // inside it are what the player meant to send, so they are kept and the tags are not.
+        if (text.contains("[[")) {
+            text = markupTag.replace(text, " ").replace(Regex("\\s+"), " ").trim()
+        }
 
         // An aside in brackets at the end is never part of what the player says or does.
         var previous: String

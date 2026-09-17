@@ -109,21 +109,74 @@ object ContinuityGuard {
         )
     }
 
+    /** The communication blocks in a turn: a text, a call, an email - someone not in the room. */
+    private val commBlock = Regex(
+        "\\[\\[\\s*(sms|email|call|letter|broadcast|document)([^\\]]*)]]([\\s\\S]*?)\\[\\[\\s*/\\s*\\1\\s*]]",
+        RegexOption.IGNORE_CASE
+    )
+    private val commSender = Regex("(?:from|with|to)\\s*=\\s*\"([^\"]*)\"", RegexOption.IGNORE_CASE)
+
+    /** Who took part in this turn's remote communication, and the prose with those blocks removed. */
+    private data class Remote(val correspondents: Set<String>, val prose: String)
+
+    private fun remoteTraffic(narration: String): Remote {
+        val names = mutableSetOf<String>()
+        var prose = narration
+        commBlock.findAll(narration).forEach { match ->
+            commSender.findAll(match.groupValues[2]).forEach { attribute ->
+                names += attribute.groupValues[1].trim().lowercase()
+            }
+            // The body of a message mentions its sender constantly; none of it is presence.
+            prose = prose.replace(match.value, " ")
+        }
+        return Remote(names.filter { it.isNotBlank() && it != "me" && it != "you" }.toSet(), prose)
+    }
+
     /** Reading the prose back against the state file to catch what the state block omitted. */
     fun auditNarration(snapshot: WorldSnapshot, narration: String, movedNames: Set<String>): List<Issue> {
         if (narration.isBlank()) return emptyList()
         val issues = mutableListOf<Issue>()
         val here = snapshot.currentLocation?.id
-        val lower = narration.lowercase()
+        // A text message is not an arrival. Someone who wrote to the player from across town
+        // has not walked into the room, and reading their message as presence is what turned
+        // every phone call into a teleport warning.
+        val remote = remoteTraffic(narration)
+        val lower = remote.prose.lowercase()
+
+        // A message can only come from someone the player can actually exchange messages with.
+        remote.correspondents.forEach { correspondent ->
+            val npc = snapshot.npcs.firstOrNull {
+                it.name.equals(correspondent, true) ||
+                    it.name.split(' ').first().equals(correspondent, true)
+            } ?: return@forEach
+            if (!ContactChannels.canReach(npc)) {
+                issues += Issue(
+                    SEVERITY_WARNING,
+                    "no-channel",
+                    "${npc.name} communicates with the player remotely, but no contact details " +
+                        "have ever been exchanged with them.",
+                    "Left unrecorded. Either play out the exchange of contact details first, or " +
+                        "record it in \"contacts\" in the same turn it happens."
+                )
+            }
+        }
 
         snapshot.npcs.forEach { npc ->
             val name = npc.name.trim()
             if (name.length < 3) return@forEach
             val firstName = name.split(' ').first()
+            // A whole-word match, so a short first name like Liv is still recognised without
+            // "liv" matching inside "delivery".
             val mentioned = lower.contains(name.lowercase()) ||
-                (firstName.length >= 4 && lower.contains(firstName.lowercase()))
+                Regex("\\b${Regex.escape(firstName.lowercase())}\\b").containsMatchIn(lower)
             if (!mentioned) return@forEach
             if (npc.name in movedNames) return@forEach
+            // Someone who only appeared inside a message block was never in the room.
+            if (name.lowercase() in remote.correspondents ||
+                firstName.lowercase() in remote.correspondents
+            ) {
+                return@forEach
+            }
 
             if (npc.status == "DEAD" && speaksOrActs(lower, firstName)) {
                 issues += Issue(

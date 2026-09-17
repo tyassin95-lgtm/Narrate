@@ -209,22 +209,28 @@ class MigrationTest {
             .addMigrations(
                 NarrateDatabase.MIGRATION_1_2,
                 NarrateDatabase.MIGRATION_2_3,
-                NarrateDatabase.MIGRATION_3_4
+                NarrateDatabase.MIGRATION_3_4,
+                NarrateDatabase.MIGRATION_4_5
             )
             .build()
 
         val current = open()
         current.worldDao().upsert(WorldEntity(id = "w1", name = "Tidewater"))
+        current.characterDao().upsert(
+            com.narrate.app.data.entity.CharacterEntity(
+                id = "pc", worldId = "w1", name = "Vale", isPlayer = true
+            )
+        )
         current.itemDao().upsertAll(
             listOf(ItemEntity(id = "i1", worldId = "w1", name = "wool jacket", ownerId = "pc", holderId = "pc"))
         )
         current.close()
 
-        // Put the file back the way version 3 left it: items without an owner column.
+        // Put the file back the way version 3 left it: no owner column, no contact column.
         val raw = FrameworkSQLiteOpenHelperFactory().create(
             SupportSQLiteOpenHelper.Configuration.builder(context)
                 .name(REAL_DB)
-                .callback(object : SupportSQLiteOpenHelper.Callback(4) {
+                .callback(object : SupportSQLiteOpenHelper.Callback(5) {
                     override fun onCreate(db: SupportSQLiteDatabase) = Unit
                     override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
                 })
@@ -241,20 +247,41 @@ class MigrationTest {
             val kept = columns.joinToString(", ") { "`$it`" }
 
             db.execSQL("ALTER TABLE items RENAME TO items_upgraded")
-            db.execSQL(tableSql.replace(Regex(",\\s*`?ownerId`?\\s+TEXT"), ""))
+            db.execSQL(tableSql.replace(Regex(",\\s*`?ownerId`?[^,)]*"), ""))
             db.execSQL("INSERT INTO items ($kept) SELECT $kept FROM items_upgraded")
             db.execSQL("DROP TABLE items_upgraded")
             indexSql.forEach { db.execSQL(it) }
+
+            // And version 3's characters table, which knew nothing about contact details.
+            val charactersSql = db.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='characters'")
+                .use { it.moveToFirst(); it.getString(0) }
+            val characterIndexes = db.query("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='characters' AND sql IS NOT NULL")
+                .use { cursor -> generateSequence { if (cursor.moveToNext()) cursor.getString(0) else null }.toList() }
+            val characterColumns = db.query("PRAGMA table_info(characters)").use { cursor ->
+                generateSequence { if (cursor.moveToNext()) cursor.getString(1) else null }.toList()
+            }.filter { it != "playerContact" }
+            val keptCharacterColumns = characterColumns.joinToString(", ") { "`$it`" }
+            db.execSQL("ALTER TABLE characters RENAME TO characters_upgraded")
+            db.execSQL(charactersSql.replace(Regex(",\\s*`?playerContact`?[^,)]*"), ""))
+            db.execSQL("INSERT INTO characters ($keptCharacterColumns) SELECT $keptCharacterColumns FROM characters_upgraded")
+            db.execSQL("DROP TABLE characters_upgraded")
+            characterIndexes.forEach { db.execSQL(it) }
+
             db.execSQL("PRAGMA user_version = 3")
         }
 
-        // Opening it again runs MIGRATION_3_4 and then Room's own schema validation.
+        // Opening it again runs every migration from 3 and then Room's own schema validation.
         val upgraded = open()
         val items = upgraded.itemDao().all("w1")
         assertEquals(1, items.size)
         assertEquals("wool jacket", items.first().name)
         assertEquals("the owner is recovered from whoever was holding it", "pc", items.first().ownerId)
         assertEquals("Tidewater", upgraded.worldDao().get("w1")?.name)
+        assertEquals(
+            "a save from before contact tracking starts with nobody reachable",
+            "",
+            upgraded.characterDao().player("w1")?.playerContact
+        )
         upgraded.close()
         context.deleteDatabase(REAL_DB)
     }

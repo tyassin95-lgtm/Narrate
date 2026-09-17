@@ -139,8 +139,21 @@ class ChoiceGuardTest {
     }
 
     @Test
-    fun `phoning someone who is elsewhere is allowed`() {
-        assertEquals(1, vet("Call Marcus and ask him to cover the rest of your shift.").kept.size)
+    fun `phoning someone who is elsewhere is allowed once you can reach them`() {
+        // Marcus is a colleague whose number Adrian has: the state file says so.
+        val reachable = marcus.copy(playerContact = "PHONE")
+        val verdict = ChoiceGuard.vet(
+            snapshot(characters = listOf(adrian, liv, reachable)),
+            listOf(Choice("c0", "Call Marcus and ask him to cover the rest of your shift."))
+        )
+        assertEquals(1, verdict.kept.size)
+    }
+
+    @Test
+    fun `phoning someone whose number was never exchanged is not`() {
+        val verdict = vet("Call Marcus and ask him to cover the rest of your shift.")
+        assertTrue(verdict.kept.isEmpty())
+        assertEquals("no-channel", verdict.rejected.single().category)
     }
 
     @Test

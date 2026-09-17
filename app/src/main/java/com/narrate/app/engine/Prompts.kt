@@ -73,6 +73,19 @@ object Prompts {
            Never introduce another character who shares the player character's name.
         10. RECORD EVERYTHING THAT MATTERS. If it will matter later, it belongs in the state block.
             An unrecorded fact will be forgotten, and that is your failure, not the player's.
+        11. NOBODY CAN BE CONTACTED UNTIL THEY HAVE BEEN. The player can only phone, text, email
+            or message someone whose details the state file lists as exchanged. Existing in the
+            world is not a channel. Being mentioned by someone else is not a channel. Being met
+            once is not a channel. Until a number or an address is handed over in a scene you
+            actually wrote, there is no thread with that person, nothing in the inbox under their
+            name, and no way for them to reach the player either. Never write an NPC asking the
+            player to "text me later" or "let me know" unless they have given the player a way to
+            do it in that same scene - and when they do, record it in "contacts".
+        12. A MESSAGE IS NOT AN ARRIVAL. Someone who texts, calls, emails or writes to the player
+            is still wherever the state file says they are. Use the communication markup for it,
+            keep their location unchanged, and never describe them as though they had walked in.
+            A character physically arriving is a different event: narrate the arrival and record
+            the move. Present, reachable and arriving are three different things.
     """.trimIndent()
 
     private val SIMULATION_DUTIES = """
@@ -114,6 +127,16 @@ object Prompts {
             - the consequences that follow, immediate and implied
             - what is changing in the world around the player, including things they half-notice
             Never narrate in a summary voice ("you spend the afternoon talking"). Stay in the moment.
+            When the player has spoken, their words are said out loud on the page, as they wrote
+            them, inside quotation marks - not reported afterwards as "you ask her for her number".
+            You may write how it came out: the hesitation, the flat delivery, the half-laugh.
+            Everyone answers from inside their own head. What the player calls "your number" is
+            "my number" in the mouth of the person who owns it, and what the player calls "my
+            jacket" is "your jacket" when someone speaks to them about it. Never let a character
+            answer by echoing the player's words back unchanged:
+              Player: "I probably need your number first."
+              Wrong:  "Your number, definitely your number."
+              Right:  "My number. Here - " She takes his phone and types it in herself.
             End on a live situation the player can act into: a question asked, a door opening, a
             hand extended, a silence that needs filling. Do not end on a prompt like "What do you do?".
         """.trimIndent()
@@ -184,8 +207,15 @@ object Prompts {
             "deadline": "by the festival" }],
           "visual_updates": [{ "subject": "Character or place name", "subject_type": "CHARACTER|LOCATION|ITEM|CREATURE",
             "change": "what now looks different", "permanent": true }],
+          "contacts": [{ "character": "Name", "channel": "PHONE|EMAIL|SOCIAL|RADIO|LETTER",
+            "established": true, "note": "how it was exchanged - she typed it into his phone" }],
           "image_suggestion": "The single most striking image of this moment, in one sentence."
         }
+
+        On contact details: record a "contacts" entry the moment a number, address or handle
+        changes hands on the page, and only then. That entry is the only thing that makes the
+        person reachable later, and "established": false takes it away again when a number is
+        blocked, lost or changed.
 
         On objects: "held_by" is who physically has it, "owner" is whose it is. Lending, borrowing
         and carrying something for someone change the holder and never the owner. Only set "owner"
@@ -266,7 +296,11 @@ object Prompts {
            that belongs to an NPC's point of view. If an NPC did something, the option is the
            player's response to it.
 
-        Format: one option per line, no numbering needed. Two to four words of intent may follow
+        Format: plain text, one option per line, no numbering needed. Never put formatting markup
+        in an option - no [[sms]], no [[call]], no asterisks. An option is loaded into the player's
+        input box exactly as you wrote it, and markup there becomes a broken message on screen.
+        An option to send a message is written as what the player would type: Text Liv that you got
+        home. The message itself becomes an [[sms]] block in the narration when you play it out. Two to four words of intent may follow
         a " -- " when the approach is not obvious from the line itself. That tag names the
         player's attitude; it never predicts what happens:
           "I'm not going anywhere until you tell me what happened." -- refusing to be put off
@@ -428,14 +462,46 @@ object Prompts {
         appendLine("End with ${TurnProtocol.END}.")
     }
 
+    /**
+     * What the player actually said, if anything.
+     *
+     * A suggestion the player accepted is usually a line of dialogue in quotation marks, and it
+     * arrives labelled CHOICE rather than SPEECH. Reading the quotation marks rather than the
+     * label is what stops those words being reported second-hand instead of spoken.
+     */
+    private fun spokenWords(input: String, kind: String): String {
+        if (kind == "SPEECH") return input.trim()
+        val quoted = Regex("[\"\u201c]([^\"\u201c\u201d]{2,})[\"\u201d]").findAll(input)
+            .map { it.groupValues[1].trim() }
+            .filter { it.isNotBlank() }
+            .toList()
+        return quoted.joinToString(" ")
+    }
+
+    /** The instruction that keeps the player's own words on the page, in their own mouth. */
+    private fun spokenInstruction(words: String): String = """
+        These are the words the player character actually speaks, and they are said out loud in
+        this turn exactly as written:
+
+        "$words"
+
+        Put them in the narration as spoken dialogue in quotation marks. Do not paraphrase them,
+        do not summarise them as "you ask her about the manifest", and do not leave them out. You
+        may write how they were delivered and where the player was looking. Everyone who answers
+        speaks from their own side of the conversation: their reply is in their own words and
+        their own pronouns, never the player's sentence handed back to them.
+    """.trimIndent()
+
     fun playerInputInstruction(input: String, kind: String): String = when (kind) {
         "SPEECH" -> """
             The player character says, in their own words:
 
             "$input"
 
-            Narrate them saying it in their established voice, and play out how the room responds:
-            who reacts, how their face changes, what they say back, what it costs or wins.
+            ${spokenInstruction(input.trim())}
+
+            Then play out how the room responds: who reacts, how their face changes, what they say
+            back, what it costs or wins.
         """.trimIndent()
         "CHOICE" -> """
             The player chose this course of action:
@@ -444,6 +510,7 @@ object Prompts {
 
             Play it out in full. Their choosing it does not guarantee it succeeds - the world responds
             according to its own state, the people in it, and what the player has earned so far.
+            ${spokenWords(input, kind).takeIf { it.isNotBlank() }?.let { "\n\n" + spokenInstruction(it) }.orEmpty()}
         """.trimIndent()
         else -> """
             The player acts:
@@ -453,6 +520,7 @@ object Prompts {
             Interpret this naturally and generously, exactly as written, even if it ignores every option
             you offered. If it is impossible in the current state, do not refuse out of character - show
             the attempt meeting the world and failing or being redirected in a concrete, physical way.
+            ${spokenWords(input, kind).takeIf { it.isNotBlank() }?.let { "\n\n" + spokenInstruction(it) }.orEmpty()}
         """.trimIndent()
     }
 }

@@ -49,6 +49,11 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
   before you see them, and tapping one loads it into the input box to edit rather than sending it.
   An option is only ever your move - never what it will achieve, how anyone will react, or what
   it will reveal. That stays the narrator's to decide once you have chosen.
+- **Nobody is in your phone until they give you their number.** Contact details are world
+  state, exchanged on the page and recorded like any other fact. Knowing someone exists,
+  hearing about them from a friend, even meeting them, does not create a thread with them -
+  so the narrator cannot show you messages from a man you have never spoken to, and a
+  suggestion to text a stranger never reaches the screen.
 - **Your opening is the opening.** If you write the scene your story starts on, that is the first
   scene: the world is built around it, it starts in the place it names, and it is pinned as canon
   from turn one rather than filed away as something that might happen later.
@@ -217,7 +222,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 229 tests covering parsing, continuity, canon, imagery, cost and persistence
+./gradlew testDebugUnitTest         # 258 tests covering parsing, continuity, canon, imagery, cost and persistence
 ```
 
 Keep the keystore. Android identifies an app by its signing key, so a release built with a
@@ -284,7 +289,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 229 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 258 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
@@ -323,6 +328,16 @@ that merely retells it is dropped rather than left waiting for a scene the playe
 A tenth covers creation completeness: a reply cut off mid-object keeps the fields that arrived,
 the fields the model dropped are asked for on their own and merged in, and nothing already
 written — least of all anything the player wrote — is overwritten by that top-up.
+
+A later playthrough produced three more. One covers place identity: "Liv's apartment" and
+"Adrian's apartment" are two thirds alike by any word-counting measure, which is how walking
+someone home merged her address into the player's own and recorded them both in the wrong
+flat - so places are matched on the words peculiar to them, and a conflicting owner means a
+different place whatever else the names share. Another covers communication: an NPC can only
+be texted once a channel exists, a message from across town is not somebody walking in, and a
+sender nobody has contact details for is flagged rather than accepted. A third covers the
+journal, which used to stop at "turns 0-9" for another eighteen turns before the next chapter
+could form.
 
 Two more came out of a pre-release audit of the whole app rather than a reported bug. One runs
 each provider against a real socket and reads the bytes that leave the app: a reasoning model

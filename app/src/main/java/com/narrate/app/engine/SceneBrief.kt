@@ -104,6 +104,23 @@ object SceneBrief {
                 appendLine()
             }
 
+            val reachable = snapshot.npcs.filter { ContactChannels.canReach(it) }
+            appendLine("## WHO ${player.name.uppercase()} CAN REACH FROM HERE")
+            if (reachable.isEmpty()) {
+                appendLine("- Nobody. No numbers, no addresses, no message threads. Do not suggest")
+                appendLine("  texting, calling or emailing anyone, and do not suggest checking a thread")
+                appendLine("  with someone. Asking someone present for their number is allowed.")
+            } else {
+                reachable.forEach { npc ->
+                    appendLine(
+                        "- ${npc.name}: by ${ContactChannels.parse(npc.playerContact)
+                            .joinToString(", ") { ContactChannels.describe(it) }}."
+                    )
+                }
+                appendLine("- Nobody else. Anyone not on this list cannot be contacted at all.")
+            }
+            appendLine()
+
             val carrying = snapshot.playerInventory()
             appendLine("## WHAT ${player.name.uppercase()} CAN ACTUALLY USE")
             if (carrying.isEmpty()) {

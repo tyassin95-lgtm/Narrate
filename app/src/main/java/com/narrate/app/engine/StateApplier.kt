@@ -448,6 +448,43 @@ class StateApplier(private val repo: WorldRepository) {
             repo.saveThreads(listOf(merged))
         }
 
+        // 8b. Contact details. A channel is a fact, and it starts the turn it is handed over.
+        val contactMemories = mutableListOf<MemoryEntity>()
+        delta.contacts.filter { it.character.isNotBlank() }.forEach { incoming ->
+            val character = findCharacter(incoming.character) ?: run {
+                report.add(
+                    ContinuityGuard.SEVERITY_INFO, "contact",
+                    "Contact details were recorded for someone unknown: ${incoming.character}.",
+                    "Ignored. Introduce the character before exchanging details with them."
+                )
+                return@forEach
+            }
+            if (character.isPlayer) return@forEach
+            val channel = ContactChannels.normalise(incoming.channel)
+            val updated = character.copy(
+                playerContact = if (incoming.established) {
+                    ContactChannels.add(character.playerContact, channel)
+                } else {
+                    ContactChannels.remove(character.playerContact, channel)
+                }
+            )
+            characters[characters.indexOfFirst { it.id == character.id }] = updated
+            repo.saveCharacter(updated)
+            val description = if (incoming.established) {
+                "The player and ${character.name} can now reach each other by " +
+                    "${ContactChannels.describe(channel)}${incoming.note.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}"
+            } else {
+                "The player can no longer reach ${character.name} by ${ContactChannels.describe(channel)}."
+            }
+            contactMemories += MemoryEntity(
+                id = newId(), worldId = worldId, kind = "FACT", text = description.trim('.', ' ') + ".",
+                importance = 4, subjectIds = character.id, subjectNames = character.name,
+                keywords = MemoryIndex.keywords(description).joinToString(" "),
+                storyTime = delta.storyTime ?: world.storyTime, turnIndex = turnIndex
+            )
+        }
+        if (contactMemories.isNotEmpty()) repo.saveMemories(contactMemories)
+
         // 9. Memory: the reason the world does not forget.
         val memories = delta.memories.filter { it.text.isNotBlank() }.map { incoming ->
             val subjectIds = incoming.subjects.mapNotNull { subject ->

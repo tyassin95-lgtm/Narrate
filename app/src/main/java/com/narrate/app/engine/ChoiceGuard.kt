@@ -115,6 +115,33 @@ object ChoiceGuard {
             }
         }
 
+        // Reaching someone remotely requires a way to reach them. Asking for their number is
+        // how that begins and stays perfectly allowed; texting a stranger does not.
+        npcs.filter { !ContactChannels.canReach(it) }.forEach { npc ->
+            firstName(npc.name)?.let { name ->
+                val reaches = Regex(
+                    "\\b(call|calls|phone|phones|ring|rings|text|texts|message|messages|email|emails|dm)\\s+" +
+                        "(?:up\\s+|back\\s+)?$name\\b"
+                )
+                val theirThread = Regex("$name'?s?\\s+(number|phone|email|thread|messages|inbox|chat)")
+                // Asking for a number is how a channel begins, and stays allowed. "Ask what he
+                // wanted" is not that: the ask has to be about the contact details themselves.
+                val asksForIt = Regex(
+                    "\\b(ask|asks|asking|get|gets|getting|swap|swaps|exchange|exchanges|trade|give|gives)\\b" +
+                        "[^.?!]{0,40}\\b(number|numbers|email|address|handle|details|contact|phone)\\b"
+                )
+                if ((reaches.containsMatchIn(text) || theirThread.containsMatchIn(text)) &&
+                    !asksForIt.containsMatchIn(text)
+                ) {
+                    return Rejection(
+                        choice, "no-channel",
+                        "the player has no way to contact ${npc.name}: no number, address or " +
+                            "thread with them has been exchanged"
+                    )
+                }
+            }
+        }
+
         return null
     }
 

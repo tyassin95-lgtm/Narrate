@@ -360,7 +360,11 @@ class TurnDirector(
         val lastCompacted = repo.lastCompactedTurn(worldId)
         val keepRecent = config.recentTurnWindow.coerceAtLeast(6)
         val compactUpTo = world.turnCount - keepRecent - 1
-        if (compactUpTo - lastCompacted < CHAPTER_SIZE) return
+        val waiting = compactUpTo - lastCompacted
+        // A full chapter is the target. But waiting for ten more turns every time meant the
+        // journal stopped at "turns 0-9" for another eighteen turns while everything since sat
+        // in the log unsummarised, so a shorter chapter is written rather than none at all.
+        if (waiting < MIN_CHAPTER_SIZE) return
 
         val from = lastCompacted + 1
         val to = (from + CHAPTER_SIZE - 1).coerceAtMost(compactUpTo)
@@ -430,6 +434,8 @@ class TurnDirector(
 
     private companion object {
         const val CHAPTER_SIZE = 10
+        /** Below this a chapter is too thin to be worth a call; above it the journal keeps up. */
+        const val MIN_CHAPTER_SIZE = 4
         /** Fewer than this is not a menu, and is worth a second call to put right. */
         const val MIN_CHOICES = 2
         /** Enough for choices and a state block, not enough to pay for a second narration. */

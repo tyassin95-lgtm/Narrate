@@ -145,6 +145,8 @@ object WorldDigest {
         appendLine(worldMap(snapshot))
         appendLine()
         appendLine(npcRoster(snapshot))
+        appendLine()
+        appendLine(ContactChannels.render(snapshot.characters))
         val factions = snapshot.factions.filter { it.status != "DISSOLVED" }
         if (factions.isNotEmpty()) {
             appendLine()
@@ -260,9 +262,15 @@ object WorldDigest {
         npcs.take(60).forEach { npc ->
             val place = snapshot.locationName(npc.currentLocationId)
             val status = if (npc.status != "ALIVE") " [${npc.status}]" else ""
+            val reach = if (ContactChannels.canReach(npc)) {
+                " Reachable by ${ContactChannels.parse(npc.playerContact).joinToString(", ") { ContactChannels.describe(it) }}."
+            } else {
+                " The player has no way to contact them."
+            }
             appendLine(
                 "- ${npc.name}$status: at $place." +
                     (if (npc.routine.isNotBlank()) " Routine: ${npc.routine.truncate(120)}." else "") +
+                    reach +
                     " Last seen on turn ${npc.lastSeenTurn}."
             )
         }
