@@ -42,6 +42,7 @@ class ImagePromptTest {
     private val npcId = "npc"
     private val badgeId = "item-badge"
     private val satchelId = "item-satchel"
+    private val bookId = "item-book"
 
     private class CapturingImageProvider : AiProvider {
         override val id = ProviderId.OPENAI
@@ -93,7 +94,9 @@ class ImagePromptTest {
                 ItemEntity(id = badgeId, worldId = worldId, name = "Hospital ID badge",
                     holderId = playerId, significance = "Carried from the beginning."),
                 ItemEntity(id = satchelId, worldId = worldId, name = "Leather satchel",
-                    appearance = "A scuffed brown leather messenger bag.", locationId = wardId)
+                    appearance = "A scuffed brown leather messenger bag.", locationId = wardId),
+                ItemEntity(id = bookId, worldId = worldId, name = "Medical reference book",
+                    holderId = playerId, significance = "Carried from the beginning.")
             )
         )
     }
@@ -189,8 +192,62 @@ class ImagePromptTest {
         director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(badgeId))
         val prompt = fake.prompts.single()
         assertTrue(prompt.contains("It belongs to the player character."))
-        assertTrue(prompt.contains("it must show Adrian Voss"))
+        assertTrue(prompt.contains("The photograph on it is of its owner, Adrian Voss"))
         assertTrue(prompt.contains("Dark hair, green eyes."))
+    }
+
+    @Test
+    fun `an ordinary object never wears its owner's face`() = runBlocking {
+        // A medical textbook came back with the player's portrait on the cover, because the
+        // prompt named him and image models do not evaluate "if".
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(bookId))
+        val prompt = fake.prompts.single()
+        assertTrue("the owner's description must not appear at all", !prompt.contains("Dark hair, green eyes"))
+        assertTrue(!prompt.contains("The photograph on it is of"))
+        assertTrue("and people must be ruled out explicitly", prompt.contains("No person appears in this image"))
+    }
+
+    @Test
+    fun `an object that really does carry a face is told whose it is`() = runBlocking {
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(badgeId))
+        val prompt = fake.prompts.single()
+        assertTrue(prompt.contains("The photograph on it is of its owner, Adrian Voss"))
+        assertTrue(prompt.contains("Dark hair, green eyes."))
+        assertTrue("and it must not then forbid the person it just asked for",
+            !prompt.contains("No person appears in this image"))
+    }
+
+    @Test
+    fun `an object made of writing is allowed to have writing on it`() = runBlocking {
+        // Forbidding all text is why the badge came back as a blank plastic sleeve.
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(badgeId))
+        val badge = fake.prompts.single()
+        assertTrue(badge.contains("writing that genuinely belongs on this object"))
+        assertTrue("invented captions are still unwelcome", badge.contains("No captions, watermarks, borders"))
+        assertTrue(!badge.contains("No text, captions, watermarks or borders in the image."))
+
+        fake.prompts.clear()
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(satchelId))
+        assertTrue(
+            "a satchel has nothing written on it",
+            fake.prompts.single().contains("No text, captions, watermarks or borders in the image.")
+        )
+    }
+
+    @Test
+    fun `a nameless object is asked for as a real example of its kind`() = runBlocking {
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Item(badgeId))
+        assertTrue(
+            fake.prompts.single().contains("an ordinary, real example of that kind of thing, with the parts one of those actually has")
+        )
+    }
+
+    @Test
+    fun `a portrait of a person is still a portrait of a person`() = runBlocking {
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Character(playerId))
+        val prompt = fake.prompts.single()
+        assertTrue("the no-people rule belongs to objects only", !prompt.contains("No person appears in this image"))
+        assertTrue(prompt.contains("No text, captions, watermarks or borders in the image."))
     }
 
     @Test

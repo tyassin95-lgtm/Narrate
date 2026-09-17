@@ -61,10 +61,36 @@ object AuthoredCanon {
         return null
     }
 
+    /**
+     * Words people use to label a field rather than to name a person.
+     *
+     * Someone writing "Adrian Voss Apperance: dark hair, green eyes" has named their character
+     * Adrian Voss and then headed a section. Taking the label as part of the name leaves it
+     * baked into their world for good, so it is trimmed off. Misspellings are included because
+     * people type quickly and the name is canon either way.
+     *
+     * Only words that are never surnames belong here. "Story", "Notes" and "History" are real
+     * family names, and trimming one of those would be the same mistake in the other direction.
+     */
+    private val fieldLabels = setOf(
+        "appearance", "apperance", "appearence", "backstory", "personality", "biography",
+        "bio", "description", "desc", "profile", "traits", "stats", "overview", "background"
+    )
+
+    /** Drops a trailing field label so a heading never becomes part of someone's name. */
+    private fun stripFieldLabel(candidate: String): String {
+        var words = candidate.split(' ').filter { it.isNotBlank() }
+        while (words.size > 1 && words.last().lowercase().trim(':', '-') in fieldLabels) {
+            words = words.dropLast(1)
+        }
+        return words.joinToString(" ")
+    }
+
     private fun tidy(raw: String): String = raw.trim()
         .trim('"', '\'', '\u201c', '\u201d', ',', '.', ';', '-', '\u2014')
         .replace(Regex("\\s+"), " ")
         .trim()
+        .let(::stripFieldLabel)
 
     private fun isPlausibleName(candidate: String): Boolean {
         if (candidate.length !in 2..70) return false

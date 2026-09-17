@@ -113,6 +113,26 @@ class CodexViewModel(application: Application, private val worldId: String) : An
         }
     }
 
+    /**
+     * Corrects the player character's name.
+     *
+     * The protagonist's name is the player's own canon, so they get to fix it - whether they
+     * mistyped it, changed their mind, or the app read a heading they wrote as part of it.
+     */
+    fun renameCharacter(characterId: String, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            val character = repo.character(characterId) ?: return@launch
+            if (character.name == trimmed) return@launch
+            repo.saveCharacter(character.copy(name = trimmed))
+            repo.visualForSubject(characterId)?.let { identity ->
+                repo.saveVisualIdentity(identity.copy(subjectName = trimmed))
+            }
+            transient.value = transient.value.copy(message = "Renamed to $trimmed.")
+        }
+    }
+
     fun togglePin(memory: MemoryEntity) {
         viewModelScope.launch { repo.setMemoryPinned(memory.id, !memory.pinned) }
     }

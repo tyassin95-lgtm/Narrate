@@ -37,6 +37,25 @@ class AuthoredCanonTest {
     }
 
     @Test
+    fun `a heading the player wrote is not taken as part of their name`() {
+        // Written in the wild as "Adrian Voss Apperance: Dark hair, striking green eyes..."
+        assertEquals(
+            "Adrian Voss",
+            AuthoredCanon.characterName("Adrian Voss Apperance: Dark hair, striking green eyes, fit.")
+        )
+        assertEquals(
+            "Elena Vasquez",
+            AuthoredCanon.characterName("Elena Vasquez Appearance: short, heavyset.")
+        )
+        assertEquals(
+            "Marcus Reyes",
+            AuthoredCanon.characterName("Marcus Reyes - Backstory: he grew up on the docks.")
+        )
+        // A real name that merely ends in an ordinary word is left alone.
+        assertEquals("Mary Story", AuthoredCanon.characterName("Mary Story: a diver."))
+    }
+
+    @Test
     fun `a player who named nobody is not given a name by accident`() {
         assertNull(AuthoredCanon.characterName("A drifter with no name, hunted across three counties."))
         assertNull(AuthoredCanon.characterName("someone quiet who works nights"))

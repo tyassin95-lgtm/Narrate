@@ -176,6 +176,36 @@ class AlbumManagementTest {
     }
 
     @Test
+    fun `the player can correct their character's name`() = runBlocking {
+        // A name read out of a heading the player wrote should not be permanent.
+        repo.saveCharacter(repo.character(playerId)!!.copy(name = "Adrian Voss Apperance"))
+        val viewModel = CodexViewModel(ApplicationProvider.getApplicationContext(), worldId)
+
+        viewModel.renameCharacter(playerId, "  Adrian Voss  ")
+        withTimeout(5_000) { viewModel.state.first { it.message?.startsWith("Renamed") == true } }
+
+        assertEquals("Adrian Voss", repo.character(playerId)!!.name)
+    }
+
+    @Test
+    fun `renaming carries through to the visual identity`() = runBlocking {
+        director.generate(repo.snapshot(worldId)!!, ImageSubject.Character(playerId)).getOrThrow()
+        val viewModel = CodexViewModel(ApplicationProvider.getApplicationContext(), worldId)
+
+        viewModel.renameCharacter(playerId, "Adrian Vale")
+        withTimeout(5_000) { viewModel.state.first { it.message?.startsWith("Renamed") == true } }
+
+        assertEquals("Adrian Vale", repo.visualForSubject(playerId)!!.subjectName)
+    }
+
+    @Test
+    fun `a blank name is refused`() = runBlocking {
+        val viewModel = CodexViewModel(ApplicationProvider.getApplicationContext(), worldId)
+        viewModel.renameCharacter(playerId, "   ")
+        assertEquals("Adrian Voss", repo.character(playerId)!!.name)
+    }
+
+    @Test
     fun `drawing clears its progress when it finishes`() = runBlocking {
         val viewModel = CodexViewModel(ApplicationProvider.getApplicationContext(), worldId)
         viewModel.generateItemImage(badgeId)

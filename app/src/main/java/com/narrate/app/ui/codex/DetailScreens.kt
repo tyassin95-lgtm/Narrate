@@ -9,8 +9,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,11 +41,17 @@ fun CharacterDetailScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val character = state.characters.firstOrNull { it.id == characterId }
     val images = state.imagesFor(characterId)
+    var renaming by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = NarrateColors.Background,
         topBar = {
             NarrateTopBar(character?.name ?: "Character", onBack = onBack) {
+                if (character?.isPlayer == true) {
+                    IconButton(onClick = { renaming = true }) {
+                        Icon(Icons.Default.Edit, "Correct this name", tint = NarrateColors.TextSecondary)
+                    }
+                }
                 DrawButton(
                     drawing = state.isDrawing(characterId),
                     enabled = !state.generating
@@ -51,6 +62,16 @@ fun CharacterDetailScreen(
         if (character == null) {
             EmptyState("Not found", "This character is no longer part of the world.", Modifier.padding(padding))
             return@Scaffold
+        }
+        if (renaming) {
+            RenameDialog(
+                current = character.name,
+                onDismiss = { renaming = false },
+                onConfirm = {
+                    renaming = false
+                    viewModel.renameCharacter(characterId, it)
+                }
+            )
         }
         Column(
             Modifier
@@ -132,6 +153,37 @@ fun CharacterDetailScreen(
             Spacer(Modifier.height(40.dp))
         }
     }
+}
+
+/** Your protagonist's name is yours to correct. */
+@Composable
+private fun RenameDialog(current: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var value by remember(current) { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NarrateColors.SurfaceElevated,
+        title = { Text("Your character's name", color = NarrateColors.TextPrimary) },
+        text = {
+            Column {
+                Text(
+                    "This is the name the narrator uses from here on, and the name written on " +
+                        "anything of yours that carries one.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NarrateColors.TextMuted
+                )
+                Spacer(Modifier.height(12.dp))
+                NarrateField(value, { value = it }, "Name")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(value) }, enabled = value.isNotBlank()) {
+                Text("Save", color = NarrateColors.Accent)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = NarrateColors.TextSecondary) }
+        }
+    )
 }
 
 /** A place, its condition, who is in it, and where you can get to from there. */

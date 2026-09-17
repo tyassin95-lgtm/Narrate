@@ -15,6 +15,9 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
 - **A world that remembers.** Every fact, event, promise, relationship, injury, object and
   place is written to a save file the moment it happens, and handed back to the model as
   authoritative state on every turn. The model is never asked to remember anything.
+- **Pictures of the right thing.** What kind of object something is - whether it carries its
+  owner's face, whether writing belongs on it - is decided in code before the prompt is written,
+  because image models do not evaluate "if".
 - **Your models, your keys.** OpenAI, Anthropic Claude, Google Gemini and xAI Grok. Narrate asks
   each provider what your key can actually reach, sorts the current flagships to the top, and shows
   what each one costs. Pick a different model for narration, for background simulation and for images.
@@ -189,7 +192,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 136 tests covering parsing, continuity, canon, imagery, cost and persistence
+./gradlew testDebugUnitTest         # 152 tests covering parsing, continuity, canon, imagery, cost and persistence
 ```
 
 Without a keystore the release APK is signed with the debug key so it still installs.
@@ -253,7 +256,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 136 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 152 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
@@ -279,4 +282,5 @@ it, and that the saved picture becomes the item's icon. A fourth drives world ge
 model that returns an empty message, and asserts it is retried with more room and then explained
 rather than left spinning. A fifth covers the album: deleting an image releases every portrait,
 map icon, inventory icon, cover and visual reference that pointed at it, falling back to the
-subject's next surviving picture.
+subject's next surviving picture. A sixth covers what an object is: a textbook must not wear its
+owner's face, a badge must carry it, and a badge must be allowed the writing that makes it a badge.

@@ -62,7 +62,17 @@ class ImageDirector(
             if (references.isNotEmpty()) {
                 appendLine(referenceNote(plan.type))
             }
-            appendLine("No text, captions, watermarks or borders in the image.")
+            appendLine(
+                if (plan.allowsInWorldText) {
+                    // Forbidding all text turns an ID badge into a blank plastic sleeve and a
+                    // book into a featureless block. Only invented captions are unwelcome.
+                    "Any writing in the picture must be writing that genuinely belongs on this " +
+                        "object - a printed name, a label, a title, a stamp. No captions, " +
+                        "watermarks, borders or titles added over the picture."
+                } else {
+                    "No text, captions, watermarks or borders in the image."
+                }
+            )
         }
 
         val result = provider.generateImage(
@@ -109,7 +119,9 @@ class ImageDirector(
         val subjectNames: List<String>,
         val locationName: String,
         val referenceImageIds: List<String>,
-        val size: String
+        val size: String,
+        /** True when writing genuinely belongs on this subject, such as a label or a title. */
+        val allowsInWorldText: Boolean = false
     )
 
     private suspend fun plan(snapshot: WorldSnapshot, subject: ImageSubject, extraDirection: String): Plan {
@@ -203,6 +215,9 @@ class ImageDirector(
                     ?: throw IllegalStateException("That object is no longer in this world.")
                 val identity = repo.visualForSubject(item.id)
                 val holder = snapshot.characterById(item.holderId)
+                val bearsLikeness =
+                    ObjectTraits.bearsOwnerLikeness(item.name, item.description, item.appearance)
+                val bearsText = ObjectTraits.bearsText(item.name, item.description, item.appearance)
                 val place = snapshot.locationById(item.locationId)
                     ?: snapshot.locationById(holder?.currentLocationId)
                 val prompt = buildString {
@@ -224,15 +239,22 @@ class ImageDirector(
                     }
                     holder?.let { owner ->
                         appendLine("It belongs to ${if (owner.isPlayer) "the player character" else owner.name}.")
-                        if (owner.appearance.isNotBlank()) {
-                            // An ID, a photograph, a portrait or a monogram shows its owner. Without
-                            // this the model invents a stranger and puts them on the player's badge.
+                        if (bearsLikeness && owner.appearance.isNotBlank()) {
+                            // Stated as fact, because this object really does carry a face, and
+                            // the face on it should be its owner's rather than a stranger's.
                             appendLine(
-                                "If this object bears its owner's likeness or name - an identity card, " +
-                                    "a photograph, a portrait, an engraving - it must show " +
-                                    "${owner.name}, described as: ${owner.appearance.truncate(300)}"
+                                "The photograph on it is of its owner, ${owner.name}: " +
+                                    owner.appearance.truncate(300)
                             )
                         }
+                    }
+                    if (!bearsLikeness) {
+                        // Anything else is an object and nothing more. Naming a person at all
+                        // is enough to get their portrait printed on a book cover.
+                        appendLine(
+                            "No person appears in this image: no faces, portraits or photographs " +
+                                "on it, in it, or beside it. The object alone."
+                        )
                     }
                     place?.let { appendLine("It is currently at ${it.name}.") }
                     appendLine("Show this object and nothing else. It fills the frame.")
@@ -248,7 +270,8 @@ class ImageDirector(
                     // A carried object has no location of its own; it is wherever its owner is.
                     locationName = place?.name.orEmpty(),
                     referenceImageIds = identity?.let { referenceIdsOf(it) }.orEmpty(),
-                    size = "1024x1024"
+                    size = "1024x1024",
+                    allowsInWorldText = bearsText
                 )
             }
 
@@ -352,8 +375,9 @@ class ImageDirector(
         } else {
             appendLine(
                 "No description has been recorded for it yet. Depict exactly what $noun called " +
-                    "\"$name\" plainly is, as it would appear in this world. Do not substitute a " +
-                    "different subject, and do not invent an elaborate one."
+                    "\"$name\" plainly is: an ordinary, real example of that kind of thing, with the " +
+                    "parts one of those actually has. Do not substitute a different subject, and do " +
+                    "not invent an elaborate one."
             )
         }
     }
