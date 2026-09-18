@@ -47,6 +47,45 @@ data class WorldSnapshot(
         return npcs.filter { it.currentLocationId == here && it.status == "ALIVE" }
     }
 
+    /**
+     * Places close enough that somebody there can be heard from where the player is standing.
+     *
+     * A man inside the house can call through the door to two people on the pavement without
+     * teleporting: the pavement is outside the house, and a threshold is not a wall. Location
+     * and presence are different questions, and treating them as one flagged a neighbour
+     * shouting from his own hallway as a continuity failure.
+     */
+    fun withinEarshot(locationId: String?): Boolean {
+        val here = currentLocation?.id ?: return false
+        val there = locationId ?: return false
+        if (there == here) return true
+        val inside = locationById(here)
+        val other = locationById(there)
+        // One contains the other: a room and its building, a building and its street.
+        if (inside?.parentId == there || other?.parentId == here) return true
+        // Or they share a parent and one is the doorway onto the other - either because a
+        // route joins them, or because one is named after the other: the pavement called
+        // "Maple Street Outside 118 Maple Street" is the front step of 118 Maple Street.
+        if (inside?.parentId != null && inside.parentId == other?.parentId) {
+            if (links.any { !it.blocked && linkJoins(it, here, there) }) return true
+            val a = inside.name.lowercase()
+            val b = other.name.lowercase()
+            return (a.length >= 4 && b.contains(a)) || (b.length >= 4 && a.contains(b))
+        }
+        return false
+    }
+
+    private fun linkJoins(link: LocationLinkEntity, a: String, b: String): Boolean =
+        (link.fromId == a && link.toId == b) || (link.fromId == b && link.toId == a)
+
+    /** Who is near enough to speak across a threshold without moving. */
+    fun withinEarshotNpcs(): List<CharacterEntity> {
+        val here = currentLocation?.id ?: return emptyList()
+        return npcs.filter {
+            it.status == "ALIVE" && it.currentLocationId != here && withinEarshot(it.currentLocationId)
+        }
+    }
+
     /** NPCs one link away: close enough to walk in, which the GM should know about. */
     fun nearbyNpcs(): List<CharacterEntity> {
         val here = currentLocation?.id ?: return emptyList()

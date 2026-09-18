@@ -43,25 +43,60 @@ class StateApplier(private val repo: WorldRepository) {
         fun findCharacter(reference: String?): CharacterEntity? = repo.resolveCharacter(characters, reference)
 
         /** Places referenced but never declared still have to exist, or people vanish. */
+        /**
+         * A place named in passing, written onto the map where it actually belongs.
+         *
+         * A location created with no parent and no route is a node floating on its own in the
+         * corner of the map, and every arrival at it reads as an unexplained jump. What the
+         * name says about it comes first - "the third floor of 118 Maple" is inside 118 Maple -
+         * and failing that it goes inside whatever contains where the player is standing, with
+         * a route from where they set out.
+         */
         suspend fun ensureLocation(reference: String?, originHint: String): LocationEntity? {
             if (reference.isNullOrBlank()) return null
             findLocation(reference)?.let { return it }
+
+            val here = locations.firstOrNull { it.id == snapshot.currentLocation?.id }
+            // Somewhere the name itself places inside another known location.
+            // The most specific place the name mentions: "the third floor of 118 Maple Street"
+            // belongs to 118 Maple Street, not to Maple Street.
+            val namedWithin = locations.filter { candidate ->
+                candidate.name.length >= 4 &&
+                    candidate.name.lowercase() != reference.trim().lowercase() &&
+                    reference.lowercase().contains(candidate.name.lowercase())
+            }.maxByOrNull { it.name.length }
+            val parent = namedWithin ?: here?.let { locations.firstOrNull { p -> p.id == it.parentId } }
+
             val created = LocationEntity(
                 id = newId(),
                 worldId = worldId,
                 name = reference.trim(),
                 type = PlaceIdentity.typeFromName(reference, "BUILDING"),
+                parentId = parent?.id?.takeIf { it != here?.id || namedWithin != null },
                 description = "First referenced $originHint.",
                 discovered = true,
-                firstSeenTurn = turnIndex
+                firstSeenTurn = turnIndex,
+                mapX = (locations.size % 7) * 0.14f + 0.08f,
+                mapY = (locations.size / 7) * 0.16f + 0.1f
             )
             locations += created
             repo.saveLocation(created)
+
+            // And a way to get there from where the player was, so arriving is not a jump.
+            if (here != null && here.id != created.id && links.none { linkJoins(it, here.id, created.id) }) {
+                val link = LocationLinkEntity(
+                    id = newId(), worldId = worldId, fromId = here.id, toId = created.id,
+                    mode = "on foot", description = "Found on the way."
+                )
+                links += link
+                repo.saveLinks(listOf(link))
+            }
             report.add(
                 ContinuityGuard.SEVERITY_INFO,
                 "location",
                 "Referenced a place that was never declared: ${created.name}.",
-                "Created it so the reference resolves. Describe it when the player arrives."
+                "Created it" + (parent?.let { " inside ${it.name}" } ?: "") +
+                    " and linked it to ${here?.name ?: "the map"}, so the reference resolves."
             )
             return created
         }

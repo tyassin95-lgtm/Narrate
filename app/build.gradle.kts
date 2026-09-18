@@ -14,8 +14,8 @@ android {
         applicationId = "com.narrate.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.14"
+        versionCode = 15
+        versionName = "1.15"
         vectorDrawables { useSupportLibrary = true }
     }
 

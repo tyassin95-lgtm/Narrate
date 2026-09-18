@@ -538,6 +538,16 @@ private fun JournalTab(state: CodexUiState) {
             }
         }
         item {
+            if (state.chapters.isEmpty()) {
+                Text(
+                    "No chapters yet. Early turns are replayed to the narrator in full, so they are " +
+                        "gathered into chapters only once the story is long enough to need it. Every " +
+                        "turn is below either way.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NarrateColors.TextMuted
+                )
+                Spacer(Modifier.height(10.dp))
+            }
             Text("Turn log", style = MaterialTheme.typography.headlineMedium, color = NarrateColors.TextPrimary)
         }
         items(state.turns.reversed()) { turn ->

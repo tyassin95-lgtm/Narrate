@@ -585,64 +585,102 @@ object Prompts {
     }
 
     /**
-     * What the player actually said, if anything.
+     * What the player typed, split into the part they did and the part they said.
      *
-     * A suggestion the player accepted is usually a line of dialogue in quotation marks, and it
-     * arrives labelled CHOICE rather than SPEECH. Reading the quotation marks rather than the
-     * label is what stops those words being reported second-hand instead of spoken.
+     * Players do not write in one register. "Ask why she left the party, keeping your voice
+     * gentle. \"Let me walk you home then I'll go home\"" is an instruction and a line of
+     * dialogue in one message, and treating the whole thing as speech put the stage direction
+     * in the character's mouth, word for word, in front of the player.
      */
-    private fun spokenWords(input: String, kind: String): String {
-        if (kind == "SPEECH") return input.trim()
-        val quoted = Regex("[\"\u201c]([^\"\u201c\u201d]{2,})[\"\u201d]").findAll(input)
-            .map { it.groupValues[1].trim() }
-            .filter { it.isNotBlank() }
-            .toList()
-        return quoted.joinToString(" ")
+    data class PlayerTurn(val done: String, val said: List<String>) {
+        val hasSpeech: Boolean get() = said.isNotEmpty()
+    }
+
+    private val quoted = Regex("[\"\u201c]([^\"\u201c\u201d]{2,})[\"\u201d]")
+
+    fun readPlayerInput(input: String, kind: String): PlayerTurn {
+        val text = input.trim()
+        if (text.isBlank()) return PlayerTurn("", emptyList())
+
+        val lines = quoted.findAll(text).map { it.groupValues[1].trim() }.filter { it.isNotBlank() }.toList()
+        if (lines.isEmpty()) {
+            // Nothing in quotation marks: on the speech button it is all speech, otherwise it
+            // is all action.
+            return if (kind == "SPEECH") PlayerTurn("", listOf(text)) else PlayerTurn(text, emptyList())
+        }
+        // Whatever is left once the spoken lines are lifted out is what they are doing while
+        // they say it. Punctuation left stranded by the removal is not an instruction.
+        val remainder = quoted.replace(text, " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .trim(',', '.', ';', ':', '-', ' ')
+        return PlayerTurn(remainder, lines)
     }
 
     /** The instruction that keeps the player's own words on the page, in their own mouth. */
     private fun spokenInstruction(words: String): String = """
-        These are the words the player character actually speaks, and they are said out loud in
-        this turn exactly as written:
-
-        "$words"
-
-        Put them in the narration as spoken dialogue in quotation marks. Do not paraphrase them,
-        do not summarise them as "you ask her about the manifest", and do not leave them out. You
-        may write how they were delivered and where the player was looking. Everyone who answers
-        speaks from their own side of the conversation: their reply is in their own words and
-        their own pronouns, never the player's sentence handed back to them.
+        Those words are said out loud in this turn exactly as written. Put them in the narration
+        as spoken dialogue in quotation marks. Do not paraphrase them, do not summarise them as "you ask her about the
+        manifest", and do not leave them out. You may write how they were delivered and where the
+        player was looking. Everyone who answers speaks from their own side of the conversation:
+        their reply is in their own words and their own pronouns, never the player's sentence
+        handed back to them.
     """.trimIndent()
 
-    fun playerInputInstruction(input: String, kind: String): String = when (kind) {
-        "SPEECH" -> """
-            The player character says, in their own words:
+    fun playerInputInstruction(input: String, kind: String): String {
+        val turn = readPlayerInput(input, kind)
+        return buildString {
+            appendLine(
+                when (kind) {
+                    "CHOICE" -> "The player chose this:"
+                    "SPEECH" -> "This is the player's turn:"
+                    else -> "This is the player's turn:"
+                }
+            )
+            appendLine()
+            appendLine(input.trim())
+            appendLine()
 
-            "$input"
-
-            ${spokenInstruction(input.trim())}
-
-            Then play out how the room responds: who reacts, how their face changes, what they say
-            back, what it costs or wins.
-        """.trimIndent()
-        "CHOICE" -> """
-            The player chose this course of action:
-
-            $input
-
-            Play it out in full. Their choosing it does not guarantee it succeeds - the world responds
-            according to its own state, the people in it, and what the player has earned so far.
-            ${spokenWords(input, kind).takeIf { it.isNotBlank() }?.let { "\n\n" + spokenInstruction(it) }.orEmpty()}
-        """.trimIndent()
-        else -> """
-            The player acts:
-
-            $input
-
-            Interpret this naturally and generously, exactly as written, even if it ignores every option
-            you offered. If it is impossible in the current state, do not refuse out of character - show
-            the attempt meeting the world and failing or being redirected in a concrete, physical way.
-            ${spokenWords(input, kind).takeIf { it.isNotBlank() }?.let { "\n\n" + spokenInstruction(it) }.orEmpty()}
-        """.trimIndent()
+            if (turn.done.isNotBlank()) {
+                appendLine("WHAT THEY DO: ${turn.done}")
+                appendLine(
+                    "That is an instruction to you, not something they said out loud. Play it out " +
+                        "in their own manner - never quote it back as dialogue, and never skip it " +
+                        "because something else in their message was easier to write."
+                )
+                appendLine()
+            }
+            if (turn.hasSpeech) {
+                appendLine("WHAT THEY SAY, WORD FOR WORD:")
+                turn.said.forEach { appendLine("  \"$it\"") }
+                appendLine(spokenInstruction(turn.said.joinToString(" ")))
+                appendLine()
+            }
+            if (turn.done.isNotBlank() && turn.hasSpeech) {
+                appendLine(
+                    "Both of those happen this turn, in the order they were written. Losing half of " +
+                        "what the player typed is the one thing you may not do with their turn."
+                )
+                appendLine()
+            }
+            appendLine(
+                when (kind) {
+                    "CHOICE" ->
+                        "Play it out in full. Their choosing it does not guarantee it succeeds - the " +
+                            "world responds according to its own state, the people in it, and what the " +
+                            "player has earned so far."
+                    else ->
+                        "Interpret this naturally and generously, exactly as written, even if it ignores " +
+                            "every option you offered. If it is impossible in the current state, do not " +
+                            "refuse out of character - show the attempt meeting the world and failing or " +
+                            "being redirected in a concrete, physical way."
+                }
+            )
+            appendLine()
+            appendLine(
+                "Then play out how the room responds: who reacts, how their face changes, what they " +
+                    "say back, what it costs or wins."
+            )
+        }.trim()
     }
 }

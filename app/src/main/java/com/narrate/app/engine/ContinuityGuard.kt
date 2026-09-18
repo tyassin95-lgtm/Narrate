@@ -258,13 +258,26 @@ object ContinuityGuard {
                 )
             }
             if (here != null && npc.currentLocationId != here && npc.status == "ALIVE" && speaksOrActs(lower, firstName)) {
-                issues += Issue(
-                    SEVERITY_WARNING,
-                    "presence",
-                    "${npc.name} appears to act in the scene but is recorded at " +
-                        "${snapshot.locationName(npc.currentLocationId)}, not ${snapshot.locationName(here)}.",
-                    "Position left unchanged. Either move them explicitly with a reason, or keep them offstage."
-                )
+                // Somebody in the next room, or inside the house the player is standing outside,
+                // can be heard and answered without having moved an inch.
+                if (snapshot.withinEarshot(npc.currentLocationId)) {
+                    issues += Issue(
+                        SEVERITY_INFO,
+                        "presence",
+                        "${npc.name} took part from ${snapshot.locationName(npc.currentLocationId)}, " +
+                            "which is within earshot of ${snapshot.locationName(here)}.",
+                        "Allowed: they can be heard across the threshold. They are still recorded " +
+                            "where they were, so move them only if they actually came through."
+                    )
+                } else {
+                    issues += Issue(
+                        SEVERITY_WARNING,
+                        "presence",
+                        "${npc.name} appears to act in the scene but is recorded at " +
+                            "${snapshot.locationName(npc.currentLocationId)}, not ${snapshot.locationName(here)}.",
+                        "Position left unchanged. Either move them explicitly with a reason, or keep them offstage."
+                    )
+                }
             }
         }
         issues += unrecordedPeople(snapshot, narration)
@@ -328,6 +341,7 @@ object ContinuityGuard {
         val needle = firstName.lowercase()
         val pattern = Regex(
             "$needle\\s+(says|said|asks|asked|replies|replied|answers|answered|shouts|shouted|" +
+                "calls|called|calling|" +
                 "whispers|whispered|nods|nodded|steps|stepped|walks|walked|turns|turned|smiles|smiled|" +
                 "laughs|laughed|leans|leaned|grabs|grabbed|hands|handed|looks|looked|stands|stood|sits|sat)"
         )

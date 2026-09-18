@@ -104,7 +104,7 @@ object ChoiceGuard {
 
         // Talking to someone who is not here, without any means of reaching them.
         val here = snapshot.currentLocation?.id
-        npcs.filter { it.currentLocationId != here }.forEach { npc ->
+        npcs.filter { it.currentLocationId != here && !snapshot.withinEarshot(it.currentLocationId) }.forEach { npc ->
             firstName(npc.name)?.let { name ->
                 val talksTo = Regex("\\b(ask|tell|say to|talk to|answer|reply to|thank|greet)\\s+$name\\b")
                 val remotely = Regex("\\b(call|phone|ring|text|message|write|email|radio)\\b")

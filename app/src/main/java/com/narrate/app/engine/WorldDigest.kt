@@ -139,7 +139,21 @@ object WorldDigest {
             }
         }
 
-        val nearby = snapshot.nearbyNpcs()
+        val earshot = snapshot.withinEarshotNpcs()
+        if (earshot.isNotEmpty()) {
+            appendLine()
+            appendLine("## WITHIN EARSHOT (not in the room, but close enough to be heard)")
+            earshot.forEach {
+                appendLine("- ${it.name}: in ${snapshot.locationName(it.currentLocationId)}")
+            }
+            appendLine(
+                "They can call through a door, be heard from a hallway, answer from the next room " +
+                    "or watch from a window without moving. If one of them actually comes through, " +
+                    "that is a move and you record it."
+            )
+        }
+
+        val nearby = snapshot.nearbyNpcs().filterNot { it in earshot }
         if (nearby.isNotEmpty()) {
             appendLine()
             appendLine("## NEARBY (one move away - could plausibly arrive)")

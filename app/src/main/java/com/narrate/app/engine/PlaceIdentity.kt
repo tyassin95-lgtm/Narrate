@@ -30,6 +30,32 @@ object PlaceIdentity {
         "lower", "back", "front", "inside", "outside", "main"
     )
 
+    /** Words that say a place is a room inside something larger. */
+    /**
+     * Words naming a part of a place rather than the place itself.
+     *
+     * "The third floor of 118 Maple Street" is inside 118 Maple Street, not another way of
+     * saying it, and collapsing the two is how a house, its landing and a bedroom became one
+     * location with one name.
+     */
+    private val partWords = setOf(
+        "room", "bedroom", "kitchen", "bathroom", "hallway", "corridor", "landing", "ward",
+        "office", "lobby", "stairwell", "cell", "attic", "basement", "cellar", "study",
+        "floor", "level", "wing", "entrance", "doorway", "porch", "balcony", "roof", "stairs",
+        "upstairs", "downstairs", "kerb", "curb", "pavement", "sidewalk", "step", "steps"
+    )
+
+    /** Words for a whole dwelling, which are only ever synonyms of each other. */
+    private val dwellingWords = setOf("apartment", "flat", "suite", "studio", "unit", "rooms")
+
+    private val roomWords = partWords + setOf("ward", "office", "cabin")
+
+    /** Words that say a place is a whole building. */
+    private val buildingWords = setOf(
+        "house", "apartment", "flat", "hospital", "hotel", "block", "tower", "cafe", "bar",
+        "pub", "restaurant", "shop", "store", "church", "school", "library", "station", "clinic"
+    )
+
     /** The words that actually pick this place out from every other place. */
     fun distinctive(name: String): Set<String> {
         val words = name.normalizeName().split(' ').filter { it.isNotBlank() }
@@ -59,22 +85,22 @@ object PlaceIdentity {
         // distinctive words disagree, no amount of shared furniture makes it one place.
         if (shared.isEmpty()) return false
 
-        // One name being the other plus more detail is the same place named longer:
-        // "Night Ward" and "the Night Ward", "Liv's flat" and "Liv's flat, kitchen".
-        return shared == dx || shared == dy
+        // One name being the other plus more detail is usually the same place named longer:
+        // "Night Ward" and "the Night Ward", "Liv's apartment" and "the apartment Liv rents".
+        if (shared != dx && shared != dy) return false
+
+        // Unless what the longer name adds is a part of the place rather than a fuller way of
+        // saying it. "The third floor of 118 Maple Street" is inside 118 Maple Street, not the
+        // same address, and collapsing the two is how a house, a landing and a bedroom became
+        // one location with one name.
+        // Which part of a place each name means, over every word rather than the distinctive
+        // ones, because "floor" and "room" are exactly the words the distinctive filter drops.
+        // A flat and an apartment are the same thing said twice; a flat and its kitchen are not.
+        val partsOf = { name: String ->
+            name.normalizeName().split(' ').filter { it in partWords }.toSet()
+        }
+        return partsOf(a) == partsOf(b)
     }
-
-    /** Words that say a place is a room inside something larger. */
-    private val roomWords = setOf(
-        "room", "bedroom", "kitchen", "bathroom", "hallway", "corridor", "landing", "ward",
-        "office", "lobby", "stairwell", "cell", "cabin", "attic", "basement", "cellar", "study"
-    )
-
-    /** Words that say a place is a whole building. */
-    private val buildingWords = setOf(
-        "house", "apartment", "flat", "hospital", "hotel", "block", "tower", "cafe", "bar",
-        "pub", "restaurant", "shop", "store", "church", "school", "library", "station", "clinic"
-    )
 
     /**
      * The type a place's own name says it is.

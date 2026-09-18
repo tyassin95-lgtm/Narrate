@@ -53,6 +53,10 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
   written down - where they are going, what they do, why they are so quiet - they answer it
   themselves, in their own voice. Every decision, secret, feeling and commitment stays yours,
   and anything the app cannot confidently place is left for you.
+- **Being somewhere is not being in the scene.** Someone inside the house you are standing
+  outside can call through the door, answer from the next room or watch from a window without
+  having moved. Presence, earshot and arrival are three different things, and the guard knows
+  which is which.
 - **Warnings you can trust.** What actually contradicted your world is kept apart from what
   the guard threw away before you saw it. A discarded suggestion never happened, and filing it
   as a continuity failure is how a codex full of warnings stops meaning anything.
@@ -245,7 +249,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 315 tests covering parsing, continuity, canon, imagery, cost and persistence
+./gradlew testDebugUnitTest         # 326 tests covering parsing, continuity, canon, imagery, cost and persistence
 ```
 
 Keep the keystore. Android identifies an app by its signing key, so a release built with a
@@ -312,7 +316,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 315 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 326 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
