@@ -20,6 +20,22 @@ object ContinuityGuard {
     const val SEVERITY_WARNING = "WARNING"
     const val SEVERITY_BLOCKED = "BLOCKED"
 
+    /**
+     * Two different things get recorded here, and conflating them was a mistake.
+     *
+     * Something that happened in the story and contradicts the save file is a continuity
+     * problem the player should know about. A suggestion the generator produced and the
+     * validator threw away never reached the world at all - telling the player their world
+     * broke, when what broke was a candidate nobody saw, is noise that will eventually make
+     * the real warnings unreadable.
+     */
+    private val generationCategories = setOf(
+        "suggested-action", "player-voice", "state-block", "unrecorded-person", "clock"
+    )
+
+    /** True when this was caught before it could touch the world. */
+    fun isGenerationNote(category: String): Boolean = category in generationCategories
+
     data class Issue(
         val severity: String,
         val category: String,
@@ -132,6 +148,48 @@ object ContinuityGuard {
         return Remote(names.filter { it.isNotBlank() && it != "me" && it != "you" }.toSet(), prose)
     }
 
+    /** "I'm going to turn the phone off for a while." Said in one turn; typing in the next. */
+    private val wentQuiet = Regex(
+        "\\b(turn(?:ing|ed|s)?|switch(?:ing|ed|es)?|power(?:ing|ed|s)?|shut(?:ting)?)\\s+" +
+            "(?:the\\s+|my\\s+|her\\s+|his\\s+|their\\s+|it\\s+)?(?:phone\\s+)?off\\b",
+        RegexOption.IGNORE_CASE
+    )
+
+    /**
+     * Who said, in the turns just gone, that they were going offline.
+     *
+     * A phone somebody switched off two minutes ago cannot show a typing indicator. The state
+     * file has no field for a device, but the story said it out loud, and the story is where
+     * the contradiction lives.
+     */
+    private fun silencedRecently(snapshot: WorldSnapshot): Set<String> {
+        val recent = snapshot.recentTurns.takeLast(2)
+        if (recent.isEmpty()) return emptySet()
+        val silenced = mutableSetOf<String>()
+        recent.forEach { turn ->
+            val text = turn.narration
+            wentQuiet.findAll(text).forEach { match ->
+                // Whoever was speaking or acting nearest the phone going off. Failing that,
+                // whoever is in the turn at all - people say "I'll turn it off" without their
+                // own name attached, and "she" is not something a regex can resolve.
+                val window = text.substring(
+                    (match.range.first - 200).coerceAtLeast(0),
+                    (match.range.last + 60).coerceAtMost(text.length)
+                ).lowercase()
+                fun named(haystack: String) = snapshot.npcs.map { it.name.split(' ').first().lowercase() }
+                    .filter { it.length >= 3 && Regex("\\b${Regex.escape(it)}\\b").containsMatchIn(haystack) }
+
+                val nearby = named(window).ifEmpty { named(text.lowercase()) }
+                val present = if (nearby.isNotEmpty()) nearby else {
+                    val ids = turn.presentCharacterIds.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                    snapshot.npcs.filter { it.id in ids }.map { it.name.split(' ').first().lowercase() }
+                }
+                silenced += present
+            }
+        }
+        return silenced
+    }
+
     /** Reading the prose back against the state file to catch what the state block omitted. */
     fun auditNarration(snapshot: WorldSnapshot, narration: String, movedNames: Set<String>): List<Issue> {
         if (narration.isBlank()) return emptyList()
@@ -143,12 +201,25 @@ object ContinuityGuard {
         val remote = remoteTraffic(narration)
         val lower = remote.prose.lowercase()
 
+        val silenced = silencedRecently(snapshot)
+
         // A message can only come from someone the player can actually exchange messages with.
         remote.correspondents.forEach { correspondent ->
             val npc = snapshot.npcs.firstOrNull {
                 it.name.equals(correspondent, true) ||
                     it.name.split(' ').first().equals(correspondent, true)
             } ?: return@forEach
+            val first = npc.name.split(' ').first().lowercase()
+            if (first in silenced || correspondent.lowercase() in silenced) {
+                issues += Issue(
+                    SEVERITY_WARNING,
+                    "device-state",
+                    "${npc.name} said they were turning their phone off, and then sent a message " +
+                        "anyway in the next breath.",
+                    "The message was kept, but a phone that is off stays off until somebody turns " +
+                        "it back on and you say so."
+                )
+            }
             if (!ContactChannels.canReach(npc)) {
                 issues += Issue(
                     SEVERITY_WARNING,
@@ -196,8 +267,61 @@ object ContinuityGuard {
                 )
             }
         }
+        issues += unrecordedPeople(snapshot, narration)
         return issues
     }
+
+    /**
+     * Somebody the story keeps talking about who is not in the world at all.
+     *
+     * The clearest case from a real playthrough: Liv's ex drove three quarters of the evening -
+     * he had her number, knew where she lived, was sending the messages - and no such person
+     * existed in the save file. A name that keeps coming back is a person, whether or not the
+     * player has ever seen them, and a person the world does not know is a person the world
+     * cannot keep straight.
+     */
+    private fun unrecordedPeople(snapshot: WorldSnapshot, narration: String): List<Issue> {
+        val known = (
+            snapshot.characters.flatMap { it.name.split(' ') } +
+                snapshot.locations.flatMap { it.name.split(' ') } +
+                snapshot.factions.flatMap { it.name.split(' ') }
+            ).map { it.lowercase().trim(',', '.', '\'', 's') }.toSet()
+
+        fun namesIn(text: String): Set<String> = properNouns.findAll(text)
+            .map { it.groupValues[1] }
+            .filter { it.length >= 3 && it.lowercase() !in known && it.lowercase() !in notPeople }
+            .toSet()
+
+        val hereAndNow = namesIn(narration)
+        if (hereAndNow.isEmpty()) return emptyList()
+        // Only a name that has kept coming back, so a one-off mention is never dragged in.
+        val earlier = snapshot.recentTurns.takeLast(4).map { namesIn(it.narration) }
+        return hereAndNow
+            .filter { name -> earlier.count { name in it } >= 2 }
+            .take(2)
+            .map { name ->
+                Issue(
+                    SEVERITY_WARNING,
+                    "unrecorded-person",
+                    "$name keeps coming up in the story but is not a character in this world.",
+                    "Record them in characters_new, even though the player has not met them: a " +
+                        "name that matters this much needs a location, a relationship and a place " +
+                        "in the state file."
+                )
+            }
+    }
+
+    /** A capitalised word that is not the first word of a sentence. */
+    private val properNouns = Regex("(?<=[a-z,;:\"'] )([A-Z][a-z]{2,15})\\b")
+
+    /** Capitalised words that are never somebody's name. */
+    private val notPeople = setOf(
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+        "january", "february", "march", "april", "may", "june", "july", "august",
+        "september", "october", "november", "december", "god", "christmas", "eastgate",
+        "street", "avenue", "road", "hospital", "university", "college", "police", "yeah",
+        "okay", "sorry", "thanks", "the", "and", "but", "not", "you", "her", "him"
+    )
 
     /** Crude but effective: did the name appear next to speech or an action verb? */
     private fun speaksOrActs(narration: String, firstName: String): Boolean {

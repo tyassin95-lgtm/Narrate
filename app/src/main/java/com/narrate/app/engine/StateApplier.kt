@@ -50,7 +50,7 @@ class StateApplier(private val repo: WorldRepository) {
                 id = newId(),
                 worldId = worldId,
                 name = reference.trim(),
-                type = "BUILDING",
+                type = PlaceIdentity.typeFromName(reference, "BUILDING"),
                 description = "First referenced $originHint.",
                 discovered = true,
                 firstSeenTurn = turnIndex
@@ -90,7 +90,7 @@ class StateApplier(private val repo: WorldRepository) {
                 id = newId(),
                 worldId = worldId,
                 name = incoming.name.trim(),
-                type = incoming.type.uppercase().ifBlank { "BUILDING" },
+                type = PlaceIdentity.typeFromName(incoming.name, incoming.type),
                 parentId = parent?.id,
                 description = incoming.description,
                 atmosphere = incoming.atmosphere,

@@ -64,6 +64,34 @@ object PlaceIdentity {
         return shared == dx || shared == dy
     }
 
+    /** Words that say a place is a room inside something larger. */
+    private val roomWords = setOf(
+        "room", "bedroom", "kitchen", "bathroom", "hallway", "corridor", "landing", "ward",
+        "office", "lobby", "stairwell", "cell", "cabin", "attic", "basement", "cellar", "study"
+    )
+
+    /** Words that say a place is a whole building. */
+    private val buildingWords = setOf(
+        "house", "apartment", "flat", "hospital", "hotel", "block", "tower", "cafe", "bar",
+        "pub", "restaurant", "shop", "store", "church", "school", "library", "station", "clinic"
+    )
+
+    /**
+     * The type a place's own name says it is.
+     *
+     * "Liv's Rented Room" recorded as a BUILDING is how one address came to mean the house, the
+     * upstairs hallway and her bedroom at the same time. The name is the better evidence.
+     */
+    fun typeFromName(name: String, declared: String): String {
+        val words = name.normalizeName().split(' ')
+        val type = declared.uppercase().ifBlank { "BUILDING" }
+        return when {
+            words.any { it in roomWords } && type in setOf("BUILDING", "", "LANDMARK") -> "ROOM"
+            words.any { it in buildingWords } && type == "ROOM" -> "BUILDING"
+            else -> type
+        }
+    }
+
     /**
      * The best match for a name among places that already exist, or null when it is somewhere new.
      */

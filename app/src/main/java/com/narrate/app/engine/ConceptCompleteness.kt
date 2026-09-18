@@ -16,10 +16,17 @@ object ConceptCompleteness {
         "art_style", "opening_situation"
     )
 
-    /** Fields a finished character is expected to have. `starting_items` may be empty. */
+    /**
+     * Fields a finished character is expected to have.
+     *
+     * `secrets` and `fears` are deliberately not among them, and neither is `starting_items`. A
+     * character sheet that must have a secret gets one invented, and what comes back is usually
+     * a personality trait wearing a hat: "he keeps everyone at arm's length until he wants
+     * something" is not a secret, it is the line the player already wrote about him.
+     */
     val characterFields = listOf(
         "role", "summary", "personality", "backstory", "appearance", "outfit",
-        "voice", "goals", "fears", "secrets", "ties_to_world"
+        "voice", "goals", "ties_to_world"
     )
 
     fun missingWorldFields(concept: WorldConcept): List<String> = buildList {
@@ -43,8 +50,7 @@ object ConceptCompleteness {
         if (concept.outfit.isBlank()) add("outfit")
         if (concept.voice.isBlank()) add("voice")
         if (concept.goals.isBlank()) add("goals")
-        if (concept.fears.isBlank()) add("fears")
-        if (concept.secrets.isBlank()) add("secrets")
+        // Not fears, not secrets: an invented one is worse than an empty one.
         if (concept.tiesToWorld.isBlank()) add("ties_to_world")
     }
 

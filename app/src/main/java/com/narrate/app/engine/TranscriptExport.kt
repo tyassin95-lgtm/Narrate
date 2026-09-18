@@ -43,6 +43,7 @@ object TranscriptExport {
         val locations = repo.locationDao.all(worldId)
         val items = repo.itemDao.all(worldId)
         val threads = repo.threadDao.all(worldId)
+        val memories = repo.memoryDao.all(worldId).groupBy { it.turnIndex }
         val chapters = repo.chapterDao.all(worldId).sortedBy { it.fromTurn }
 
         return buildString {
@@ -109,7 +110,7 @@ object TranscriptExport {
                 appendLine()
             }
             turns.forEach { turn ->
-                append(renderTurn(turn, issues[turn.index].orEmpty()))
+                append(renderTurn(turn, issues[turn.index].orEmpty(), memories[turn.index].orEmpty()))
             }
 
             if (chapters.isNotEmpty()) {
@@ -146,8 +147,13 @@ object TranscriptExport {
             if (locations.isNotEmpty()) {
                 appendLine("### Places on the map")
                 appendLine()
-                locations.sortedBy { it.name }.forEach {
-                    appendLine("- **${it.name}** (${it.type})${if (!it.discovered) " - undiscovered" else ""}")
+                locations.sortedBy { it.name }.forEach { location ->
+                    val within = locations.firstOrNull { it.id == location.parentId }?.name
+                    appendLine(
+                        "- **${location.name}** (${location.type})" +
+                            (within?.let { ", inside $it" }.orEmpty()) +
+                            (if (!location.discovered) " - undiscovered by the player" else "")
+                    )
                 }
                 appendLine()
             }
@@ -180,7 +186,11 @@ object TranscriptExport {
         }
     }
 
-    private fun renderTurn(turn: TurnEntity, issues: List<ContinuityIssueEntity>): String = buildString {
+    private fun renderTurn(
+        turn: TurnEntity,
+        issues: List<ContinuityIssueEntity>,
+        memories: List<com.narrate.app.data.entity.MemoryEntity>
+    ): String = buildString {
         val heading = listOfNotNull(
             turn.storyTime.takeIf { it.isNotBlank() },
             turn.locationName.takeIf { it.isNotBlank() }
@@ -208,16 +218,35 @@ object TranscriptExport {
             appendLine("_(none were offered this turn)_")
         } else {
             choices.forEachIndexed { index, choice ->
-                val tag = choice.detail.takeIf { it.isNotBlank() }?.let { " _(— $it)_" }.orEmpty()
-                appendLine("${index + 1}. [${choice.kind}] ${choice.label}$tag")
+                // The label is what the player sends; the intent tag is a hint on the card and
+                // is never part of it. They are printed apart so they cannot be read as one line.
+                appendLine("${index + 1}. [${choice.kind}] ${choice.label}")
+                choice.detail.takeIf { it.isNotBlank() }?.let { appendLine("   - intent tag (never sent): $it") }
             }
         }
         appendLine()
 
-        if (issues.isNotEmpty()) {
-            appendLine("**Continuity notes for this turn:**")
+        if (memories.isNotEmpty()) {
+            appendLine("**What the world recorded:**")
             appendLine()
-            issues.forEach { appendLine("- `${it.severity}/${it.category}` ${it.description} → ${it.resolution}") }
+            memories.forEach {
+                appendLine("- `${it.kind}` ${it.text}${if (it.pinned) " _(pinned)_" else ""}")
+            }
+            appendLine()
+        }
+
+        val world = issues.filterNot { ContinuityGuard.isGenerationNote(it.category) }
+        val caught = issues.filter { ContinuityGuard.isGenerationNote(it.category) }
+        if (world.isNotEmpty()) {
+            appendLine("**Continuity notes for this turn (things that happened in the world):**")
+            appendLine()
+            world.forEach { appendLine("- `${it.severity}/${it.category}` ${it.description} → ${it.resolution}") }
+            appendLine()
+        }
+        if (caught.isNotEmpty()) {
+            appendLine("**Caught before it reached the player (never happened in the world):**")
+            appendLine()
+            caught.forEach { appendLine("- `${it.category}` ${it.description} → ${it.resolution}") }
             appendLine()
         }
         appendLine("---")

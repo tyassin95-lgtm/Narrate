@@ -136,8 +136,11 @@ class PlayViewModel(application: Application, private val worldId: String) : And
         val result = block()
         _transient.value = result.fold(
             onSuccess = { turnResult ->
+                // Only what happened in the world. A suggestion the guard discarded never
+                // reached the player, and flagging it as a continuity problem is noise.
                 _lastIssues.value = turnResult.issues
                     .filter { it.severity != com.narrate.app.engine.ContinuityGuard.SEVERITY_INFO }
+                    .filterNot { com.narrate.app.engine.ContinuityGuard.isGenerationNote(it.category) }
                     .map { "${it.description} ${it.resolution}" }
                 // The repair pass handles an incomplete reply silently; the player only hears
                 // about it when even that could not produce a usable turn.

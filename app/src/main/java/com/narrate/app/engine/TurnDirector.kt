@@ -168,6 +168,25 @@ class TurnDirector(
             )
         }
 
+        // A world where three turns in a row happen at the same "early morning" has stopped
+        // keeping time, and every routine, shift and opening hour depends on it.
+        val stalled = snapshot.recentTurns.takeLast(2)
+            .all { it.storyTime.isNotBlank() && it.storyTime == applied.world.storyTime }
+        if (stalled && snapshot.recentTurns.size >= 2) {
+            repo.saveIssues(
+                ContinuityGuard.Report().apply {
+                    add(
+                        ContinuityGuard.SEVERITY_WARNING,
+                        "clock",
+                        "The story clock has read \"${applied.world.storyTime}\" for three turns " +
+                            "running, though time has plainly passed.",
+                        "Advance story_time by however long each turn takes, with an actual time " +
+                            "of day when a scene runs continuously."
+                    )
+                }.toEntities(worldId, turnIndex)
+            )
+        }
+
         val turn = TurnEntity(
             id = newId(),
             worldId = worldId,
@@ -345,6 +364,11 @@ class TurnDirector(
                 appendLine()
                 appendLine(ContinuityGuard.renderCorrections(previous))
             }
+        }
+
+        StyleWatch.render(snapshot).takeIf { it.isNotBlank() }?.let {
+            appendLine()
+            append(it)
         }
 
         appendLine()

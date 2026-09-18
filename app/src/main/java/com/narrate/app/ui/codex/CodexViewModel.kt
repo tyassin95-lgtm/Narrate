@@ -46,6 +46,14 @@ data class CodexUiState(
      */
     val discoveredLocations: List<LocationEntity> get() = locations.filter { it.discovered }
 
+    /** Things that actually happened in the world and contradicted it. */
+    val worldIssues: List<ContinuityIssueEntity>
+        get() = issues.filterNot { com.narrate.app.engine.ContinuityGuard.isGenerationNote(it.category) }
+
+    /** Things the narrator proposed that were thrown away before the player saw them. */
+    val generationNotes: List<ContinuityIssueEntity>
+        get() = issues.filter { com.narrate.app.engine.ContinuityGuard.isGenerationNote(it.category) }
+
     val player: CharacterEntity? get() = characters.firstOrNull { it.isPlayer }
     val npcs: List<CharacterEntity> get() = characters.filter { !it.isPlayer }
     fun imagePath(id: String?): String? = images.firstOrNull { it.id == id }?.filePath

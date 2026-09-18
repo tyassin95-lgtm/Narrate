@@ -131,9 +131,43 @@ class TranscriptExportTest {
     fun `what the guard noticed is attached to the turn it happened on`() {
         val markdown = export()
         val turnOne = markdown.substringAfter("### Turn 1")
-        assertTrue(turnOne.contains("WARNING/player-voice"))
+        assertTrue(turnOne.contains("player-voice"))
         assertTrue(turnOne.contains("said nothing"))
         assertTrue(turnOne.contains("He answers ordinary questions"))
+    }
+
+    @Test
+    fun `a suggestion the guard threw away is not filed as something that happened`() {
+        runBlocking {
+            repo.saveIssues(
+                listOf(
+                    ContinuityIssueEntity(
+                        id = "i2", worldId = worldId, turnIndex = 0, severity = "WARNING",
+                        category = "suggested-action",
+                        description = "A suggested action contradicted the world: it offers the coat.",
+                        resolution = "It was not offered to the player."
+                    ),
+                    ContinuityIssueEntity(
+                        id = "i3", worldId = worldId, turnIndex = 0, severity = "WARNING",
+                        category = "presence",
+                        description = "Liv Mercer appears to act in the scene but is recorded elsewhere.",
+                        resolution = "Position left unchanged."
+                    )
+                )
+            )
+        }
+        val turnZero = export().substringAfter("### Turn 0").substringBefore("### Turn 1")
+        assertTrue(turnZero.contains("things that happened in the world"))
+        assertTrue(turnZero.contains("appears to act in the scene"))
+        assertTrue(turnZero.contains("Caught before it reached the player"))
+        assertTrue(turnZero.contains("it offers the coat"))
+    }
+
+    @Test
+    fun `an intent tag is printed apart from the line the player would send`() {
+        val markdown = export()
+        assertTrue(markdown.contains("1. [SPEECH] \"Sorry - long shift.\""))
+        assertTrue(markdown.contains("intent tag (never sent): apologise"))
     }
 
     @Test

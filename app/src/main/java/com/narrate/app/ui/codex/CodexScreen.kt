@@ -670,7 +670,7 @@ private fun ContinuityTab(state: CodexUiState) {
             )
             Spacer(Modifier.height(6.dp))
         }
-        items(state.issues) { issue ->
+        items(state.worldIssues) { issue ->
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -699,8 +699,47 @@ private fun ContinuityTab(state: CodexUiState) {
                 Text(issue.resolution, style = MaterialTheme.typography.bodySmall, color = NarrateColors.TextMuted)
             }
         }
-        if (state.issues.isEmpty()) {
+        if (state.worldIssues.isEmpty()) {
             item { EmptyState("Nothing to report", "The world has stayed consistent so far.") }
+        }
+        if (state.generationNotes.isNotEmpty()) {
+            item {
+                Spacer(Modifier.height(18.dp))
+                Text(
+                    "Caught before it reached you",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = NarrateColors.TextPrimary
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "These never happened in your world. The narrator proposed something that " +
+                        "contradicted the save file - usually a suggested action - and it was " +
+                        "discarded before you saw it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NarrateColors.TextMuted
+                )
+                Spacer(Modifier.height(6.dp))
+            }
+            items(state.generationNotes) { note ->
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(NarrateColors.Surface, RoundedCornerShape(6.dp))
+                        .padding(10.dp)
+                ) {
+                    Row {
+                        Pill(note.category)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "turn ${note.turnIndex}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = NarrateColors.TextMuted
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(note.description, style = MaterialTheme.typography.bodySmall, color = NarrateColors.TextMuted)
+                }
+            }
         }
     }
 }

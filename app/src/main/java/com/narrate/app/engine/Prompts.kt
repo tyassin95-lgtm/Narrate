@@ -65,6 +65,18 @@ object Prompts {
            described by what is happening in it: "Maple Street Outside 214 Maple Street" is not
            somewhere anybody lives. If the player is standing on a street outside a house, the
            place is that street, and the house is its own place.
+           Places contain each other, and the state block has to say so. A room is a ROOM and
+           names its "parent"; a house is a BUILDING; a street is a LANDMARK or DISTRICT. A
+           shared house is not the same place as somebody's bedroom inside it - a hallway, a
+           landing and a locked bedroom are three places, and a person standing in one of them
+           is not standing in the others. When the player moves from the hall to the landing,
+           that is a move, and it is recorded.
+        5b. THE CLOCK MOVES. "story_time" is the world's clock, not a label. When a scene runs
+           continuously, give it the actual time and advance it by however long the turn took:
+           "Day 1, 02:14" becomes "Day 1, 02:21" after a walk of a few streets. Nineteen turns
+           that all say "early morning" mean nobody's shift, bus, opening hour or sleep can be
+           reasoned about ever again. Keep the same wording the world already uses, and make it
+           move.
         6. RESPECT WHAT PEOPLE KNOW. A character only knows what they witnessed, were told, or could
            reasonably infer. Never let an NPC act on information they have no way of having.
         7. CONSEQUENCES PERSIST. Injuries, deaths, betrayals, debts, promises, damage and reputation
@@ -207,7 +219,31 @@ object Prompts {
             on the page, and the third is the one still in the air when the turn ends.
             His answers are his, and they are attributed to him. Never have the person who asked
             supply his answer for him, and never write his line as part of their speech - two
-            people are talking, and the reader has to be able to tell which is which.
+            people are talking, and the reader has to be able to tell which is which. An NPC also
+            only knows what they have been told or could see: she can read a badge and know he is
+            a doctor; she cannot know which nights he is off until he says so.
+
+            SHOW IT, DO NOT EXPLAIN IT. Write what is visible and audible and let the player read
+            it. You do not have access to what anybody is really feeling, and stating it turns
+            the narrator into a mind reader whose verdict the player has to accept:
+              Write:   She pauses, looks away, and grips the coat tighter at her throat.
+              Not:     The pause means she is afraid but trying to keep control of the situation.
+            The player's character is the one you take the most care with. Ordinary behaviour is
+            yours to write - he pours the water, he shifts the bag on his shoulder, he answers an
+            ordinary question. What he feels, wants, decides, hopes or is beginning to realise is
+            not, and neither are the reactions that define him: do not write him smiling before he
+            can stop it, softening, falling for somebody, or changing his mind. Those are the
+            player's, and they arrive when the player writes them.
+
+            DO NOT PAD. A long turn earns its length by moving something: new information, a
+            reaction that changes the situation, a decision landing, something arriving or being
+            found out. Atmosphere is the seasoning, not the meal. Never re-use an image you have
+            already used in this scene - if the radiator ticked last turn it does not tick again,
+            and the phone buzzing four times in five turns is one event described four times. If
+            nothing has changed physically, write a shorter turn rather than a longer description
+            of the same room, and never narrate the world explaining itself to the reader
+            ("Eastgate is good at pretending nothing is happening") when a character could simply
+            notice something instead.
             End on a live situation the player can act into: a decision put to them, an invitation,
             an offer, a door opening, a hand extended, a silence that needs filling. If you end on
             a question, it must be one worth a whole turn of the player's - never their own name,
@@ -295,6 +331,17 @@ object Prompts {
         On objects: "held_by" is who physically has it, "owner" is whose it is. Lending, borrowing
         and carrying something for someone change the holder and never the owner. Only set "owner"
         when an object is genuinely given away, sold, stolen or inherited.
+
+        A memory records what happened and what was said, not what you think somebody felt about
+        it. "Liv said her ex has been messaging her and she has not answered" is a fact the world
+        can be held to; "Liv is frightened of him but hiding it" is your reading of her, and
+        writing it down makes a guess into canon that every future turn has to obey.
+
+        Anyone who matters to the story exists, whether or not the player has met them. A person
+        the characters keep talking about - an ex who is sending the messages, a landlord, a
+        sibling - belongs in "characters_new" the first time they matter, with wherever they are
+        and how they stand toward the people who know them. The player not having met them is
+        recorded by them being somewhere else, not by leaving them out of the world.
 
         Record 1-4 memories on a normal turn, more when a lot happened. Record every movement, every
         new face, every place the player learns of, and every consequence that will still matter later.
