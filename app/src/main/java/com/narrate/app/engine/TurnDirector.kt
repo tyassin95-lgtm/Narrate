@@ -168,6 +168,23 @@ class TurnDirector(
             )
         }
 
+        // Time does not run backwards inside a day, whatever shape the provider writes it in.
+        val previousTime = snapshot.recentTurns.lastOrNull()?.storyTime ?: snapshot.world.storyTime
+        if (StoryClock.wentBackwards(previousTime, applied.world.storyTime)) {
+            repo.saveIssues(
+                ContinuityGuard.Report().apply {
+                    add(
+                        ContinuityGuard.SEVERITY_WARNING,
+                        "clock",
+                        "The story clock went backwards: \"$previousTime\" to " +
+                            "\"${applied.world.storyTime}\".",
+                        "Time only moves forward within a day. Carry on from the later time, or " +
+                            "say plainly that a new day has started."
+                    )
+                }.toEntities(worldId, turnIndex)
+            )
+        }
+
         // A world where three turns in a row happen at the same "early morning" has stopped
         // keeping time, and every routine, shift and opening hour depends on it.
         val stalled = snapshot.recentTurns.takeLast(2)
@@ -198,7 +215,8 @@ class TurnDirector(
             choicesJson = AppJson.encodeToString(ListSerializer(Choice.serializer()), parsed.choices),
             storyTime = applied.world.storyTime,
             locationId = applied.world.currentLocationId,
-            locationName = snapshot.locationName(applied.world.currentLocationId),
+            locationName = applied.currentLocationName
+                .ifBlank { snapshot.locationName(applied.world.currentLocationId) },
             presentCharacterIds = applied.presentCharacterIds.joinToString(","),
             model = response.model,
             provider = choice.provider.name
@@ -464,8 +482,7 @@ class TurnDirector(
         // the journal adds its own, and "## ## The Long Nights" is what happens when it does not.
         val title = lines.firstOrNull()
             ?.trim()
-            ?.trimStart('#', '*', ' ')
-            ?.trim()
+            ?.trim('#', '*', '_', ' ')
             ?.removeSurrounding("\"")
             ?.trim()
             ?.takeIf { it.isNotBlank() && it.length < 90 } ?: "Turns $from-$to"

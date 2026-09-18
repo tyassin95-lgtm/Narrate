@@ -132,6 +132,18 @@ object ContinuityGuard {
     )
     private val commSender = Regex("(?:from|with|to)\\s*=\\s*\"([^\"]*)\"", RegexOption.IGNORE_CASE)
 
+    /** Words that make a line of speech a voice on a phone rather than a person in the room. */
+    private val overThePhone = Regex(
+        // A device, or a phrase only a phone call produces. Not the bare verb "calls": a man
+        // calling through a door is shouting, not ringing anybody.
+        "\\b(phone|telephone|mobile|voicemail|speaker|handset|the line|screen|" +
+            "text|texts|texted|texting|message|messages|messaged|" +
+            "hangs up|hung up|picks up|dials|dialled|dialed|on the other end|" +
+            "(?:the|a|another|his|her|their)\\s+call\\b|calls?\\s+(?:back|again|through the phone)|" +
+            "blocks the number|the number)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
     /** Who took part in this turn's remote communication, and the prose with those blocks removed. */
     private data class Remote(val correspondents: Set<String>, val prose: String)
 
@@ -249,6 +261,10 @@ object ContinuityGuard {
                 return@forEach
             }
 
+            // Nor was somebody whose whole appearance is a voice on a call. Not every model
+            // wraps a phone call in the call markup; a prose phone call is still a phone call.
+            if (onlyOverThePhone(remote.prose, firstName)) return@forEach
+
             if (npc.status == "DEAD" && speaksOrActs(lower, firstName)) {
                 issues += Issue(
                     SEVERITY_WARNING,
@@ -303,6 +319,17 @@ object ContinuityGuard {
         fun namesIn(text: String): Set<String> = properNouns.findAll(text)
             .map { it.groupValues[1] }
             .filter { it.length >= 3 && it.lowercase() !in known && it.lowercase() !in notPeople }
+            // A name followed by a street word is a place, whatever it is capitalised like:
+            // "Cedar" was reported as a missing person because Liv lives on Cedar Street.
+            .filter { name ->
+                !Regex(
+                    "\\b${Regex.escape(name)}\\s+(street|st|road|rd|avenue|ave|lane|court|drive|" +
+                        "way|place|park|square|bridge|hall|house|building|apartments?)\\b",
+                    RegexOption.IGNORE_CASE
+                ).containsMatchIn(text)
+            }
+            // And a person is somebody who speaks, acts, or is spoken about as a person.
+            .filter { name -> looksLikeAPerson(text, name) }
             .toSet()
 
         val hereAndNow = namesIn(narration)
@@ -324,6 +351,39 @@ object ContinuityGuard {
             }
     }
 
+    /**
+     * Cues that a capitalised word belongs to a person rather than a place or a thing.
+     *
+     * Without them the detector reported "She" as an uncatalogued character, every turn, and
+     * a street called Cedar as somebody the world had forgotten to write down.
+     */
+    private fun looksLikeAPerson(text: String, name: String): Boolean {
+        val escaped = Regex.escape(name)
+        // Said of a place, not a person: "over on Cedar", "past Juniper", "outside Maple".
+        val placeCues = Regex(
+            "\\b(?:on|along|down|up|near|past|across|toward|towards|outside|inside|at|off|via)\\s+" +
+                "(?:the\\s+)?$escaped\\b",
+            RegexOption.IGNORE_CASE
+        )
+        if (placeCues.containsMatchIn(text)) return false
+
+        val cues = listOf(
+            "$escaped\\s+(?:said|says|told|tells|asked|asks|replied|replies|wants|knows|sent|sends|" +
+                "texts|texted|called|calls|thinks|works|lives|left|came|went|showed|warned|warns|" +
+                "mentioned|admitted|promised|lied|wrote|messaged|phoned|agreed|refused|did|does|" +
+                "has|had|is|was)",
+            "(?:said|says|told|tells|asked|texted|called|met|saw|knows|trusts|loves|hates|" +
+                "avoids|warned|mentioned|blames|forgave|about|from|with)\\s+$escaped\\b",
+            "\\b(?:it|that|this|he|she|they)\\s+(?:was|is|were|are)\\s+$escaped\\b",
+            "$escaped'?s\\s+(?:phone|number|message|messages|house|room|car|name|fault|ex|" +
+                "boyfriend|girlfriend|friend|roommate|brother|sister|mother|father|side|turn|idea)",
+            "\\b(?:her|his|their|my|your)\\s+(?:ex|boyfriend|girlfriend|friend|roommate|brother|" +
+                "sister|colleague|neighbour|neighbor)\\b[^.?!]{0,24}$escaped",
+            "$escaped[^.?!]{0,24}\\b(?:her|his|their)\\s+(?:ex|boyfriend|girlfriend|roommate)\\b"
+        )
+        return cues.any { Regex(it, RegexOption.IGNORE_CASE).containsMatchIn(text) }
+    }
+
     /** A capitalised word that is not the first word of a sentence. */
     private val properNouns = Regex("(?<=[a-z,;:\"'] )([A-Z][a-z]{2,15})\\b")
 
@@ -335,6 +395,21 @@ object ContinuityGuard {
         "street", "avenue", "road", "hospital", "university", "college", "police", "yeah",
         "okay", "sorry", "thanks", "the", "and", "but", "not", "you", "her", "him"
     )
+
+    /**
+     * True when every mention of this person in the prose sits in a sentence about a phone.
+     *
+     * A boyfriend calling from across town was reported as having appeared in the flat, because
+     * his lines were narrated rather than wrapped in a call block. If the only places he turns
+     * up are sentences with a phone in them, he is on the phone.
+     */
+    private fun onlyOverThePhone(prose: String, firstName: String): Boolean {
+        val needle = Regex("\\b${Regex.escape(firstName.lowercase())}\\b")
+        val sentences = prose.split(Regex("(?<=[.!?])\\s+"))
+            .filter { needle.containsMatchIn(it.lowercase()) }
+        if (sentences.isEmpty()) return false
+        return sentences.all { overThePhone.containsMatchIn(it) }
+    }
 
     /** Crude but effective: did the name appear next to speech or an action verb? */
     private fun speaksOrActs(narration: String, firstName: String): Boolean {

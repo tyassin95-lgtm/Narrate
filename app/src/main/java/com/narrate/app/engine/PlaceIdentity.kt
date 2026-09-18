@@ -48,7 +48,29 @@ object PlaceIdentity {
     /** Words for a whole dwelling, which are only ever synonyms of each other. */
     private val dwellingWords = setOf("apartment", "flat", "suite", "studio", "unit", "rooms")
 
-    private val roomWords = partWords + setOf("ward", "office", "cabin")
+    /** Parts of a place that are out of doors: a room they are not. */
+    private val outdoorWords = setOf(
+        "pavement", "sidewalk", "kerb", "curb", "step", "steps", "porch", "balcony", "roof",
+        "yard", "garden", "path", "driveway", "gate", "forecourt", "terrace"
+    )
+
+    private val roomWords = (partWords - outdoorWords) + setOf("ward", "office", "cabin")
+
+    /** "the landing outside 3B", "the pavement outside the hospital": beside it, not within it. */
+    private val outsideOf = Regex(
+        "\\b(?:outside|in front of|across from|opposite|beside|next to|by)\\s+(.+)$",
+        RegexOption.IGNORE_CASE
+    )
+
+    /**
+     * The place a name says it stands outside of, if it says so.
+     *
+     * "Eastgate Sidewalk outside Liv's Shared Rental" was filed inside Liv's rental, which is
+     * the one place it is definitely not. Somewhere outside a building belongs beside it, in
+     * whatever contains them both.
+     */
+    fun standsOutside(name: String): String? =
+        outsideOf.find(name)?.groupValues?.get(1)?.trim()?.takeIf { it.length >= 3 }
 
     /** Words that say a place is a whole building. */
     private val buildingWords = setOf(
@@ -112,6 +134,8 @@ object PlaceIdentity {
         val words = name.normalizeName().split(' ')
         val type = declared.uppercase().ifBlank { "BUILDING" }
         return when {
+            // A pavement is not a room, whatever else the name says about it.
+            words.any { it in outdoorWords } -> "LANDMARK"
             words.any { it in roomWords } && type in setOf("BUILDING", "", "LANDMARK") -> "ROOM"
             words.any { it in buildingWords } && type == "ROOM" -> "BUILDING"
             else -> type

@@ -694,11 +694,20 @@ class WorldForge(
             PlaceIdentity.match(trimmed, mapped) { it.name }?.let { return it.id }
             // It named somewhere real to the world it just built. It exists; it was simply
             // never written down. Writing it down beats moving the person to the player.
+            // Everything belongs somewhere: an NPC's home with no parent is a node floating off
+            // the edge of the map the moment the player finds out it exists.
+            val within = mapped.filter { candidate ->
+                candidate.name.length >= 4 && trimmed.lowercase().contains(candidate.name.lowercase())
+            }.maxByOrNull { it.name.length }
+                ?: mapped.firstOrNull { it.type == "DISTRICT" }
+                ?: mapped.firstOrNull { it.type == "SETTLEMENT" || it.type == "REGION" }
+
             val created = LocationEntity(
                 id = newId(),
                 worldId = worldId,
                 name = trimmed,
                 type = PlaceIdentity.typeFromName(trimmed, "BUILDING"),
+                parentId = within?.id,
                 description = "Named when the world was built.",
                 discovered = false,
                 mapX = (mapped.size % 4) * 0.24f + 0.14f,

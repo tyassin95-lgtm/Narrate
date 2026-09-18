@@ -28,12 +28,35 @@ object ChoiceGuard {
         val kept = mutableListOf<Choice>()
         val rejected = mutableListOf<Rejection>()
 
+        // What the player has just done or said. Offering it back is offering them nothing:
+        // one real turn came back with "Yeah, overthinking sounds familiar." and an intent tag
+        // that read, in as many words, "already said".
+        val alreadyDone = snapshot.recentTurns.takeLast(2)
+            .map { it.playerInput }
+            .filter { it.isNotBlank() }
+            .map { normalise(it) }
+
         choices.forEach { choice ->
-            val rejection = firstProblem(snapshot, player, choice)
+            val repeat = normalise(choice.label).takeIf { it.length >= 8 }
+                ?.let { label -> alreadyDone.any { it == label || (it.length >= 12 && it.contains(label)) } }
+                ?: false
+            val rejection = when {
+                repeat -> Rejection(
+                    choice, "already-done",
+                    "the player has just done this - it was their last turn, word for word"
+                )
+                else -> firstProblem(snapshot, player, choice)
+            }
             if (rejection == null) kept += choice else rejected += rejection
         }
         return Verdict(kept, rejected)
     }
+
+    /** Comparable form of a line: what was said, without the punctuation or the casing. */
+    private fun normalise(text: String): String = text.lowercase()
+        .replace(Regex("[^a-z0-9 ]"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
 
     private fun firstProblem(
         snapshot: WorldSnapshot,
@@ -78,6 +101,14 @@ object ChoiceGuard {
 
             val ownedByPlayer = item.ownerId == player.id
             val heldByPlayer = item.holderId == player.id
+
+            if (ownedByPlayer && thanksForOwnItem(text, mentioned)) {
+                return Rejection(
+                    choice, "item-ownership",
+                    "the ${item.name} is the player's own - thanking somebody for it turns it " +
+                        "into theirs"
+                )
+            }
 
             if (ownedByPlayer && !heldByPlayer && returnsToOther(text, mentioned, snapshot)) {
                 val holder = snapshot.characterById(item.holderId)?.name ?: "someone else"
@@ -179,6 +210,15 @@ object ChoiceGuard {
                 )
         val askingIfTheyWantIt = Regex("\\bwants?\\b[^.]{0,30}\\bback\\b").containsMatchIn(window)
         return theirs && (givingBack || askingIfTheyWantIt)
+    }
+
+    /** "Thank you for the jacket" - about the jacket the player lent out. */
+    private fun thanksForOwnItem(text: String, mention: IntRange): Boolean {
+        val window = text.substring(
+            (mention.first - 40).coerceAtLeast(0),
+            (mention.last + 10).coerceAtMost(text.length)
+        )
+        return Regex("\\b(thank|thanks|thanking|grateful)\\b[^.?!]{0,25}\\bfor\\b").containsMatchIn(window)
     }
 
     /** Offering, giving or using an object. */

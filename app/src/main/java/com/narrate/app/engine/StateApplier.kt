@@ -11,7 +11,15 @@ data class ApplyResult(
     val report: ContinuityGuard.Report,
     val world: WorldEntity,
     val presentCharacterIds: List<String>,
-    val newImageWorthySubjects: List<String>
+    val newImageWorthySubjects: List<String>,
+    /**
+     * Where the player ended the turn, named from the state as it is after applying.
+     *
+     * The snapshot the turn began with does not know about a place this turn invented, so
+     * asking it produced "unknown" in the log and the codex for any turn that moved somewhere
+     * new - which is most of the interesting ones.
+     */
+    val currentLocationName: String = ""
 )
 
 /**
@@ -65,7 +73,18 @@ class StateApplier(private val repo: WorldRepository) {
                     candidate.name.lowercase() != reference.trim().lowercase() &&
                     reference.lowercase().contains(candidate.name.lowercase())
             }.maxByOrNull { it.name.length }
-            val parent = namedWithin ?: here?.let { locations.firstOrNull { p -> p.id == it.parentId } }
+
+            // Unless the name says it stands outside that place, in which case it belongs
+            // beside it: a landing outside a flat is in the building, not in the flat.
+            val beside = PlaceIdentity.standsOutside(reference)?.let { outsideName ->
+                locations.filter { it.name.length >= 3 && outsideName.lowercase().contains(it.name.lowercase()) }
+                    .maxByOrNull { it.name.length }
+            }
+            val parent = when {
+                beside != null -> locations.firstOrNull { it.id == beside.parentId }
+                namedWithin != null -> namedWithin
+                else -> here?.let { locations.firstOrNull { p -> p.id == it.parentId } }
+            }
 
             val created = LocationEntity(
                 id = newId(),
@@ -82,14 +101,17 @@ class StateApplier(private val repo: WorldRepository) {
             locations += created
             repo.saveLocation(created)
 
-            // And a way to get there from where the player was, so arriving is not a jump.
-            if (here != null && here.id != created.id && links.none { linkJoins(it, here.id, created.id) }) {
-                val link = LocationLinkEntity(
-                    id = newId(), worldId = worldId, fromId = here.id, toId = created.id,
-                    mode = "on foot", description = "Found on the way."
-                )
-                links += link
-                repo.saveLinks(listOf(link))
+            // And a way to get there: from the place it stands outside of, and from wherever
+            // the player set out, so arriving is never a jump.
+            listOfNotNull(beside, here).distinct().forEach { from ->
+                if (from.id != created.id && links.none { linkJoins(it, from.id, created.id) }) {
+                    val link = LocationLinkEntity(
+                        id = newId(), worldId = worldId, fromId = from.id, toId = created.id,
+                        mode = "on foot", description = "Found on the way."
+                    )
+                    links += link
+                    repo.saveLinks(listOf(link))
+                }
             }
             report.add(
                 ContinuityGuard.SEVERITY_INFO,
@@ -587,9 +609,28 @@ class StateApplier(private val repo: WorldRepository) {
             repo.saveIssues(report.toEntities(worldId, turnIndex))
         }
 
+        // The player's own row and the world row must agree about where the camera is. Models
+        // differ in which one they update, and a world that thinks the player is somewhere they
+        // are not shows the wrong room, the wrong people and the wrong exits.
+        val playerNow = characters.firstOrNull { it.isPlayer }
+        if (playerNow?.currentLocationId != null && playerNow.currentLocationId != world.currentLocationId) {
+            world = world.copy(currentLocationId = playerNow.currentLocationId)
+            repo.saveWorld(world)
+            report.add(
+                ContinuityGuard.SEVERITY_INFO,
+                "location",
+                "The world and the player disagreed about where the player was standing.",
+                "The player's own position won: they are at " +
+                    "${locations.firstOrNull { it.id == playerNow.currentLocationId }?.name ?: "their recorded place"}."
+            )
+        }
+
         val here = world.currentLocationId
         val present = characters.filter { it.currentLocationId == here && it.status == "ALIVE" }.map { it.id }
-        return ApplyResult(report, world, present, visualSubjects.distinct())
+        val hereName = locations.firstOrNull { it.id == here }?.name
+            ?: snapshot.locationName(here).takeIf { it != "unknown" }
+            ?: ""
+        return ApplyResult(report, world, present, visualSubjects.distinct(), hereName)
     }
 
     private fun linkJoins(link: LocationLinkEntity, a: String, b: String): Boolean =
