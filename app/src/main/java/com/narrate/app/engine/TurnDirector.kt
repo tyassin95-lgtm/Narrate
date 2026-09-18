@@ -436,7 +436,14 @@ class TurnDirector(
         val summary = summaryResponse.text
 
         val lines = summary.trim().lines()
-        val title = lines.firstOrNull()?.trim()?.removePrefix("#")?.trim()?.removeSurrounding("\"")
+        // Models title a chapter with whatever heading markers they feel like. All of them go:
+        // the journal adds its own, and "## ## The Long Nights" is what happens when it does not.
+        val title = lines.firstOrNull()
+            ?.trim()
+            ?.trimStart('#', '*', ' ')
+            ?.trim()
+            ?.removeSurrounding("\"")
+            ?.trim()
             ?.takeIf { it.isNotBlank() && it.length < 90 } ?: "Turns $from-$to"
         val body = if (lines.size > 1) lines.drop(1).joinToString("\n").trim() else summary.trim()
 
@@ -456,7 +463,7 @@ class TurnDirector(
     private companion object {
         const val CHAPTER_SIZE = 10
         /** Below this a chapter is too thin to be worth a call; above it the journal keeps up. */
-        const val MIN_CHAPTER_SIZE = 4
+        const val MIN_CHAPTER_SIZE = 3
         /** Fewer than this is not a menu, and is worth a second call to put right. */
         const val MIN_CHOICES = 2
         /** Enough for choices and a state block, not enough to pay for a second narration. */

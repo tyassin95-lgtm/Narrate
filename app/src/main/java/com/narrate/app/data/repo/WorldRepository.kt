@@ -64,6 +64,16 @@ class WorldRepository(context: Context) {
     suspend fun snapshot(worldId: String, recentTurnWindow: Int = 8): WorldSnapshot? {
         val world = worldDao.get(worldId) ?: return null
         val characters = characterDao.all(worldId)
+        val recent = turnDao.recent(worldId, recentTurnWindow).sortedBy { it.index }
+        val chapters = chapterDao.all(worldId)
+        // Everything between the end of the last chapter and the first turn replayed in full.
+        val compactedTo = chapters.maxOfOrNull { it.toTurn } ?: -1
+        val replayedFrom = recent.minOfOrNull { it.index } ?: world.turnCount
+        val between = if (replayedFrom - 1 >= compactedTo + 1) {
+            turnDao.range(worldId, compactedTo + 1, replayedFrom - 1)
+        } else {
+            emptyList()
+        }
         return WorldSnapshot(
             world = world,
             player = characters.firstOrNull { it.isPlayer },
@@ -74,8 +84,9 @@ class WorldRepository(context: Context) {
             factions = factionDao.all(worldId),
             relationships = relationshipDao.all(worldId),
             threads = threadDao.all(worldId),
-            chapters = chapterDao.all(worldId),
-            recentTurns = turnDao.recent(worldId, recentTurnWindow).sortedBy { it.index },
+            chapters = chapters,
+            recentTurns = recent,
+            earlierTurns = between,
             memories = memoryDao.all(worldId),
             visualIdentities = visualDao.all(worldId)
         )

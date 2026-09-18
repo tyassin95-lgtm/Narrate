@@ -46,7 +46,10 @@ fun WorldMapCanvas(
     onLocation: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val placed = remember(state.locations) { layout(state.locations) }
+    // Only what the player has actually found. An undiscovered place is somewhere the world
+    // knows about and they do not.
+    val known = state.discoveredLocations
+    val placed = remember(known) { layout(known) }
     if (placed.isEmpty()) return
 
     val width = (placed.maxOf { it.x } + NODE_WIDTH + COLUMN_GAP).dp
@@ -80,7 +83,7 @@ fun WorldMapCanvas(
                     )
                 }
                 // Containment is drawn faintly so the hierarchy reads without shouting.
-                state.locations.forEach { location ->
+                known.forEach { location ->
                     val parent = positions[location.parentId] ?: return@forEach
                     val child = positions[location.id] ?: return@forEach
                     drawLine(

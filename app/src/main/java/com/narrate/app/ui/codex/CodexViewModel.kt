@@ -37,6 +37,15 @@ data class CodexUiState(
 
     fun isDrawing(subjectId: String): Boolean = generatingSubjectId == subjectId
 
+    /**
+     * The places the player knows about.
+     *
+     * A world is built with more geography than the player has seen - where each NPC sleeps,
+     * the cafe nobody has walked into yet - and those exist so people have somewhere to be.
+     * Showing them on the map would hand the player an address their character never learned.
+     */
+    val discoveredLocations: List<LocationEntity> get() = locations.filter { it.discovered }
+
     val player: CharacterEntity? get() = characters.firstOrNull { it.isPlayer }
     val npcs: List<CharacterEntity> get() = characters.filter { !it.isPlayer }
     fun imagePath(id: String?): String? = images.firstOrNull { it.id == id }?.filePath

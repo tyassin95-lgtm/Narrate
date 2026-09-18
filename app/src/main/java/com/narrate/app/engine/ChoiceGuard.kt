@@ -88,7 +88,10 @@ object ChoiceGuard {
                 )
             }
 
-            if (!heldByPlayer && offersItem(text, mentioned)) {
+            // Something of theirs that somebody is borrowing is still theirs to talk about:
+            // telling her to keep the coat, or asking for it back, are both real moves. Only an
+            // object that is not the player's at all is one they cannot offer.
+            if (!heldByPlayer && !ownedByPlayer && offersItem(text, mentioned)) {
                 val where = snapshot.characterById(item.holderId)?.name
                     ?: snapshot.locationById(item.locationId)?.name
                     ?: "elsewhere"
@@ -166,9 +169,14 @@ object ChoiceGuard {
             snapshot.npcs.any { npc ->
                 firstName(npc.name)?.let { Regex("\\b$it's\\b").containsMatchIn(window) } == true
             }
-        val givingBack = Regex("\\b(give|gives|giving|hand|hands|handing|return|returns|returning|offer|offers)\\b")
-            .containsMatchIn(window) &&
-            Regex("\\b(back|returned)\\b").containsMatchIn(window)
+        // "Return her jacket" says it without the word "back", and handing the player's own
+        // property to the person borrowing it is the same mistake either way.
+        val returning = Regex("\\b(return|returns|returning)\\b").containsMatchIn(window)
+        val givingBack = returning ||
+            (
+                Regex("\\b(give|gives|giving|hand|hands|handing|offer|offers)\\b").containsMatchIn(window) &&
+                    Regex("\\b(back|returned)\\b").containsMatchIn(window)
+                )
         val askingIfTheyWantIt = Regex("\\bwants?\\b[^.]{0,30}\\bback\\b").containsMatchIn(window)
         return theirs && (givingBack || askingIfTheyWantIt)
     }

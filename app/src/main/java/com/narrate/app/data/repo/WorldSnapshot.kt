@@ -19,6 +19,14 @@ data class WorldSnapshot(
     val threads: List<ThreadEntity>,
     val chapters: List<ChapterEntity>,
     val recentTurns: List<TurnEntity>,
+    /**
+     * Turns too old to be replayed word for word and too recent to be in a chapter yet.
+     *
+     * Without these there is a hole in the middle of the story: a world with a twelve-turn
+     * replay window and a chapter covering turns 0-3 simply had nothing to say about turns
+     * four to six.
+     */
+    val earlierTurns: List<TurnEntity> = emptyList(),
     val memories: List<MemoryEntity>,
     val visualIdentities: List<VisualIdentityEntity>
 ) {

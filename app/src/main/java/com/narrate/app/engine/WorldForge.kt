@@ -581,7 +581,12 @@ class WorldForge(
 
         val locationIds = mutableMapOf<String, String>()
         val locations = mutableListOf<LocationEntity>()
-        build?.locations?.filter { it.name.isNotBlank() }?.forEachIndexed { index, incoming ->
+        build?.locations
+            ?.filter { it.name.isNotBlank() }
+            // The builder sometimes declares the same address twice under two spellings. Two
+            // rows for one place means half the map points at one of them and half at the other.
+            ?.distinctBy { it.name.trim().lowercase() }
+            ?.forEachIndexed { index, incoming ->
             val entity = LocationEntity(
                 id = newId(),
                 worldId = worldId,

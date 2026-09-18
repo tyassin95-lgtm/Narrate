@@ -60,7 +60,11 @@ object Prompts {
            arrive only if they could plausibly travel there, and you must narrate the arrival and
            record the move in the state block.
         5. NEVER REDRAW THE MAP. Do not move, rename, resize or re-link existing places. New places
-           must connect to the existing geography and be declared in the state block.
+           must connect to the existing geography and be declared in the state block. A place is
+           named the way people name places - "214 Maple Street", "the Night Ward" - never
+           described by what is happening in it: "Maple Street Outside 214 Maple Street" is not
+           somewhere anybody lives. If the player is standing on a street outside a house, the
+           place is that street, and the house is its own place.
         6. RESPECT WHAT PEOPLE KNOW. A character only knows what they witnessed, were told, or could
            reasonably infer. Never let an NPC act on information they have no way of having.
         7. CONSEQUENCES PERSIST. Injuries, deaths, betrayals, debts, promises, damage and reputation
@@ -94,6 +98,13 @@ object Prompts {
             name, and no way for them to reach the player either. Never write an NPC asking the
             player to "text me later" or "let me know" unless they have given the player a way to
             do it in that same scene - and when they do, record it in "contacts".
+        11b. NEVER NARRATE THE RULES THEMSELVES. These laws shape what happens; they are not
+            events. Do not write that no contact details have been exchanged, that there is no
+            channel between two people, that something has not been established, or that the
+            state file says anything at all. If two people have no way to reach each other, the
+            scene simply ends without a number changing hands, and one of them may say so in
+            their own words - "I don't have your number" is dialogue; "no means of contact had
+            been established between them" is the machinery showing through the prose.
         12. A MESSAGE IS NOT AN ARRIVAL. Someone who texts, calls, emails or writes to the player
             is still wherever the state file says they are. Use the communication markup for it,
             keep their location unchanged, and never describe them as though they had walked in.
@@ -194,6 +205,9 @@ object Prompts {
               Write:  nothing for him. That one is a decision, and it is the player's.
             If a scene contains three questions and two of them are ordinary, he answers those two
             on the page, and the third is the one still in the air when the turn ends.
+            His answers are his, and they are attributed to him. Never have the person who asked
+            supply his answer for him, and never write his line as part of their speech - two
+            people are talking, and the reader has to be able to tell which is which.
             End on a live situation the player can act into: a decision put to them, an invitation,
             an offer, a door opening, a hand extended, a silence that needs filling. If you end on
             a question, it must be one worth a whole turn of the player's - never their own name,

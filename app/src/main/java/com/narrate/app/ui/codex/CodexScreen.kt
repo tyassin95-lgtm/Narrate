@@ -113,7 +113,7 @@ private fun OverviewTab(state: CodexUiState, viewModel: CodexViewModel, onCharac
                 StatChip("Turns", world.turnCount.toString())
                 StatChip("Day", world.dayNumber.toString())
                 StatChip("Cast", state.npcs.size.toString())
-                StatChip("Places", state.locations.size.toString())
+                StatChip("Places", state.discoveredLocations.size.toString())
             }
         }
         item { Spacer(Modifier.height(4.dp)) }
@@ -298,11 +298,15 @@ private fun AffinityBadge(affinity: Int) {
 
 @Composable
 private fun MapTab(state: CodexUiState, onLocation: (String) -> Unit) {
-    val roots = state.locations.filter { location ->
-        location.parentId == null || state.locations.none { it.id == location.parentId }
+    // The map is the player's knowledge of the world, not the world's own index. Where an NPC
+    // sleeps exists from the moment the world is built, but nobody has told the player about
+    // it, and drawing it hands them an address their character has never heard.
+    val known = state.discoveredLocations
+    val roots = known.filter { location ->
+        location.parentId == null || known.none { it.id == location.parentId }
     }
     var drawn by remember { mutableStateOf(true) }
-    if (drawn && state.locations.isNotEmpty()) {
+    if (drawn && known.isNotEmpty()) {
         Column(Modifier.fillMaxSize()) {
             MapHeader(drawn) { drawn = it }
             WorldMapCanvas(state, onLocation, Modifier.weight(1f).fillMaxWidth().padding(12.dp))
@@ -325,7 +329,7 @@ private fun MapTab(state: CodexUiState, onLocation: (String) -> Unit) {
                 item { LocationNode(child, state, depth, onLocation) }
             }
         }
-        if (state.locations.isEmpty()) {
+        if (known.isEmpty()) {
             item { EmptyState("No map yet", "Places are recorded as you discover them.") }
         }
     }
@@ -354,7 +358,7 @@ private fun descendants(
     state: CodexUiState,
     depth: Int = 1
 ): List<Pair<LocationEntity, Int>> =
-    state.locations.filter { it.parentId == parent.id }.flatMap { child ->
+    state.discoveredLocations.filter { it.parentId == parent.id }.flatMap { child ->
         listOf(child to depth) + descendants(child, state, depth + 1)
     }
 

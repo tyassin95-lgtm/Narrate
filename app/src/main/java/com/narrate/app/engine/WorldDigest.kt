@@ -312,12 +312,31 @@ object WorldDigest {
         }
     }
 
+    /**
+     * Everything that happened before the turns replayed verbatim.
+     *
+     * Chapters cover the oldest stretch, but a chapter is only written once enough turns have
+     * gone by, and the turns in between - too old to be replayed, too recent to be compacted -
+     * used to appear nowhere at all. Their own one-line summaries fill that gap, so no part of
+     * the story is ever invisible to the narrator.
+     */
     fun history(snapshot: WorldSnapshot): String = buildString {
         if (snapshot.chapters.isNotEmpty()) {
             appendLine("## THE STORY SO FAR (compacted history - all of it happened)")
             snapshot.chapters.forEach { chapter ->
                 appendLine("### ${chapter.title} (turns ${chapter.fromTurn}-${chapter.toTurn}, ${chapter.storyTime})")
                 appendLine(chapter.summary)
+            }
+        }
+        val between = snapshot.earlierTurns
+        if (between.isNotEmpty()) {
+            appendLine()
+            appendLine("## SINCE THEN (turns not yet gathered into a chapter - all of it happened)")
+            between.forEach { turn ->
+                appendLine(
+                    "- Turn ${turn.index} (${turn.storyTime}, ${turn.locationName}): " +
+                        turn.summary.ifBlank { turn.narration.truncate(200) }
+                )
             }
         }
     }

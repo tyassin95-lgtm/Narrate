@@ -144,6 +144,15 @@ class JournalTest {
     }
 
     @Test
+    fun `a chapter title is a title, not a heading`() = runBlocking {
+        // Models like to answer with "## The Long Nights". The journal adds its own heading.
+        play(14)
+        val chapter = repo.chapterDao.all(worldId).first()
+        assertEquals("The Long Nights", chapter.title)
+        assertTrue(!chapter.title.startsWith("#"))
+    }
+
+    @Test
     fun `compacting never destroys the turns themselves`() = runBlocking {
         play(24)
         assertEquals("every turn is still on record", 24, repo.turnDao.count(worldId))
