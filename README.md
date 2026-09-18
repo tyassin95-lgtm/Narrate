@@ -84,6 +84,22 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
   hearing about them from a friend, even meeting them, does not create a thread with them -
   so the narrator cannot show you messages from a man you have never spoken to, and a
   suggestion to text a stranger never reaches the screen.
+- **Dead time is not a scene.** Waiting for an hour, a bus or a person is covered in a line
+  and the turn opens where something happens. When a scene has stopped moving - the same room,
+  the clock barely turning, nothing written down for three turns - the app says so to the
+  narrator and hands you a way out of it, so nine turns at a cafe table never happen again.
+  Filler suggestions are refused outright: checking the time, turning another page, watching
+  the same street, two routes to the same outcome, anything you have just done.
+- **Everyone has their own afternoon.** People in the scene are given their own business,
+  taken from their own record, so they start subjects, disagree, are busy and leave rather
+  than waiting to be asked questions. When you are alone somewhere, the world offers who is
+  near enough to walk in, rather than another paragraph about the furniture.
+- **The clock is the world's, not the prose's.** If the narration says twenty minutes went by,
+  the story clock has to agree; if it describes sunlight at four in the morning, that is
+  written down as a contradiction like any other.
+- **The map means something.** A place you discover is drawn beside whatever it hangs off -
+  its parent, the place it stands outside of, the street you walked from - instead of taking
+  the next free cell of a grid, and a room sits inside its building.
 - **Your opening is the opening.** If you write the scene your story starts on, that is the first
   scene: the world is built around it, it starts in the place it names, and it is pinned as canon
   from turn one rather than filed away as something that might happen later.
@@ -252,7 +268,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 339 tests covering parsing, continuity, canon, imagery, cost and persistence
+./gradlew testDebugUnitTest         # 365 tests covering parsing, continuity, canon, imagery, cost and persistence
 ```
 
 Keep the keystore. Android identifies an app by its signing key, so a release built with a
@@ -319,7 +335,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 339 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 365 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
@@ -396,3 +412,19 @@ never left half-written when the player walks away mid-creation, a rewind forget
 it removed had established, deleting a world takes its pictures off the disk with it, and a real
 database upgraded from the previous schema version is opened and validated by Room itself - the
 check that would have caught a bad migration before it crashed every existing install.
+
+A thirty-seven turn playthrough produced the last set, and none of them were continuity bugs.
+The save was consistent and the game was boring: nine turns at a cafe table, the same sidewalk
+described four times, a menu offering three ways to keep waiting, and a protagonist who
+answered nothing. So the tests now cover dead time - three turns of passing the time with
+nothing recorded is a stalled scene, the narrator is told to end it, filler suggestions are
+refused, two routes to the same outcome collapse into one, and the player is handed a way out
+even when the narrator offers none. They cover the world having something in it: somebody in
+the room is given their own business from their own record, and an empty room is given who is
+near enough to walk into it. They cover the clock, which the prose kept contradicting - twenty
+minutes of narration against three minutes on the clock is written down, and so is sunlight at
+four in the morning. And they cover the state the export exposed: a book in somebody's pocket
+is no longer also lying on the table, an offer to be texted by somebody whose number nobody
+has is flagged, a name behind a preposition is not the one doing the verb after it, background
+the world builder invented is remembered without being pinned over what the player wrote, and
+a new place is drawn beside what it belongs to instead of in the next free cell of a grid.

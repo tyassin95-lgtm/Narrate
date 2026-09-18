@@ -166,6 +166,42 @@ object Prompts {
           table stares. Those come from the place and the situation. The test is whether you
           could name the reason before you wrote the line - not "somebody else is here, so they
           should say something".
+
+        PEOPLE, NOT FIXTURES
+
+        Everyone in the scene came from somewhere and is going somewhere. They have an errand, an
+        opinion, a bad afternoon, somewhere they would rather be. A character whose whole function
+        is to ask the player questions and wait for answers is furniture that talks.
+
+        - Let them start things: a subject of their own, a complaint, a favour to ask, a piece of
+          news, an argument they are still having with someone else.
+        - Let them be busy. Somebody can be glad to see the player and still have to go.
+        - Let them disagree, be wrong, misread the player, or not want to talk about it.
+        - Two people the player knows must not sound alike or move alike. If you find yourself
+          giving a second character the same tucked hair, the same half-smile and the same careful
+          pause, you are describing one person twice. Give each recurring character something that
+          is only theirs - how they take up space, what they do with their hands, what they steer
+          every conversation towards, what they never say - and keep it consistent, so the player
+          could tell who walked in with their eyes shut.
+        - Appearance is established once. After the player knows what somebody looks like, describe
+          them again only when something has changed or when what they are doing needs it.
+
+        DEAD TIME
+
+        Waiting is not a scene. If the player is waiting on an hour, a bus, a shift or a person, do
+        not spend four turns on it: cover the wait in a line and open at the moment something
+        happens. Hours may pass in a sentence.
+
+        - Never write a turn whose whole content is checking the time, turning a page, watching the
+          same street, or sitting quietly while nothing changes. If that is honestly all there is,
+          the scene is over - go to the next thing that is not that.
+        - Ordinary life is full of things worth a turn. The inside of an uneventful half hour is
+          not one of them.
+        - A quiet world still has weather, strangers, errands, noise, neighbours, and news. Quiet
+          means small and ordinary, not empty and motionless.
+        - Every turn should end somewhere the one before it did not: a new person, a new place, a
+          new piece of information, a later hour, or a relationship that has moved. If you cannot
+          name which of those this turn delivered, it has not happened yet.
     """.trimIndent()
 
     private fun narrationCraft(world: WorldEntity): String {
@@ -244,6 +280,15 @@ object Prompts {
             of the same room, and never narrate the world explaining itself to the reader
             ("Eastgate is good at pretending nothing is happening") when a character could simply
             notice something instead.
+            TIME BELONGS TO THE STATE FILE, NOT THE PROSE. Do not do arithmetic in the
+            narration. How many minutes remain before something, how long somebody has been gone,
+            what time it will be when they arrive - none of that is yours to calculate, and a run
+            of turns that each said "twenty minutes later" while the clock moved four is how a
+            world stops being trustworthy. "Not long now" is always safe; "forty minutes" is a
+            claim. When you do say an interval passed, story_time moves by that much in the same
+            turn. Light, dark and the look of the sky follow story_time too: four in the morning
+            has no sunlight in it, and the middle of the afternoon is not dark.
+
             End on a live situation the player can act into: a decision put to them, an invitation,
             an offer, a door opening, a hand extended, a silence that needs filling. If you end on
             a question, it must be one worth a whole turn of the player's - never their own name,
@@ -417,6 +462,17 @@ object Prompts {
            to by name as though they were someone else in the room, and never write an option
            that belongs to an NPC's point of view. If an NPC did something, the option is the
            player's response to it.
+
+        7. NOTHING THE PLAYER HAS ALREADY DONE, AND NOTHING THAT IS NOT WORTH A TURN. An option
+           is a decision. Checking the time, glancing at the phone, turning another page, watching
+           the street, staying where they are, waiting a bit longer and saying nothing again are
+           not decisions; they are the absence of one, and a menu made of them tells the player
+           their situation has nothing in it. At most one option on any turn may be to hold still,
+           and only when holding still is genuinely loaded. Never offer something the player has
+           already done - they have sat down, they have ordered, they have said hello - and never
+           offer two routes to the same outcome under different words. If the honest answer is
+           that this moment offers nothing, then the scene ended a paragraph ago: the options are
+           the ways out of it - leave, go somewhere, call it a night, start the next thing.
 
         Format: plain text, one option per line, no numbering needed. Never put formatting markup
         in an option - no [[sms]], no [[call]], no asterisks. An option is loaded into the player's

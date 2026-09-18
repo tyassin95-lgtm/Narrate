@@ -36,20 +36,73 @@ object ChoiceGuard {
             .filter { it.isNotBlank() }
             .map { normalise(it) }
 
+        // How much of the menu is a way of passing time. One such option is a real choice;
+        // four of them is the app asking the player to pick which kind of nothing to do.
+        val stalled = SceneMomentum.read(snapshot).stalled
+        var idleKept = 0
+
         choices.forEach { choice ->
-            val repeat = normalise(choice.label).takeIf { it.length >= 8 }
-                ?.let { label -> alreadyDone.any { it == label || (it.length >= 12 && it.contains(label)) } }
+            val label = normalise(choice.label)
+            val repeat = label.takeIf { it.length >= 8 }
+                ?.let { text -> alreadyDone.any { it == text || (it.length >= 12 && it.contains(text)) } }
                 ?: false
+            val duplicate = kept.any { sameOutcome(normalise(it.label), label) }
+            val idle = isFiller(choice.label)
+
             val rejection = when {
                 repeat -> Rejection(
                     choice, "already-done",
                     "the player has just done this - it was their last turn, word for word"
                 )
+                duplicate -> Rejection(
+                    choice, "duplicate",
+                    "it is another way of writing an option already on the list"
+                )
+                idle && stalled -> Rejection(
+                    choice, "filler",
+                    "the scene has already stalled, and this is another turn of waiting in it"
+                )
+                idle && idleKept >= 1 -> Rejection(
+                    choice, "filler",
+                    "there is already an option for doing nothing, and two of them is not a choice"
+                )
                 else -> firstProblem(snapshot, player, choice)
             }
-            if (rejection == null) kept += choice else rejected += rejection
+            if (rejection == null) {
+                if (idle) idleKept++
+                kept += choice
+            } else {
+                rejected += rejection
+            }
         }
         return Verdict(kept, rejected)
+    }
+
+    /** Ways of spending a turn without doing anything: fine once, dismal as a menu. */
+    private val filler = Regex(
+        "^(?:check|glance at|look at)\\s+(?:the\\s+)?(?:time|clock|phone)|" +
+            "^(?:keep|continue|carry on)\\s+(?:watching|reading|waiting|sitting|standing)|" +
+            "^(?:say|do)\\s+nothing|^wait(?:\\s|$)|^(?:stay|remain|sit|stand|linger)\\b|" +
+            "\\bturn the page\\b|\\bread (?:a|another|the next) (?:page|paragraph|section)\\b|" +
+            "\\bwatch the (?:sidewalk|street|traffic|door|room)\\b|\\bagain in a few minutes\\b",
+        RegexOption.IGNORE_CASE
+    )
+
+    fun isFiller(label: String): Boolean = filler.containsMatchIn(label.trim())
+
+    /**
+     * Two options that come to the same thing.
+     *
+     * "Keep watching the sidewalk" and "Continue watching the sidewalk traffic without moving"
+     * are one option written twice, and a menu of four of those is not a decision.
+     */
+    private fun sameOutcome(a: String, b: String): Boolean {
+        if (a == b) return true
+        val wordsA = a.split(' ').filter { it.length > 3 }.toSet()
+        val wordsB = b.split(' ').filter { it.length > 3 }.toSet()
+        if (wordsA.isEmpty() || wordsB.isEmpty()) return false
+        val shared = wordsA.intersect(wordsB).size.toDouble()
+        return shared / minOf(wordsA.size, wordsB.size) >= 0.75
     }
 
     /** Comparable form of a line: what was said, without the punctuation or the casing. */

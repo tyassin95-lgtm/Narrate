@@ -604,11 +604,33 @@ class WorldForge(
             locationIds[incoming.name.trim().lowercase()] = entity.id
         }
         // Parents resolve in a second pass so order in the model's output does not matter.
-        val withParents = locations.map { location ->
+        val parented = locations.map { location ->
             val incoming = build?.locations?.firstOrNull { it.name.trim().equals(location.name, true) }
             val parentId = incoming?.parent?.trim()?.lowercase()?.let { locationIds[it] }
             location.copy(parentId = parentId?.takeIf { it != location.id })
         }
+        // And once the hierarchy is known, a room sits beside the building it is in rather than
+        // wherever the grid happened to put it. The map is the player's picture of the town.
+        // Shallowest first, so a parent is already where it belongs before its children go
+        // looking for it.
+        fun depth(location: LocationEntity): Int {
+            var current = location
+            var steps = 0
+            while (steps < 8) {
+                current = parented.firstOrNull { it.id == current.parentId } ?: break
+                steps++
+            }
+            return steps
+        }
+        val settled = mutableMapOf<String, LocationEntity>()
+        parented.sortedBy { depth(it) }.forEach { location ->
+            val parent = location.parentId?.let { settled[it] }
+            settled[location.id] = if (parent == null) location else {
+                val (x, y) = MapPlacement.place(listOf(parent), settled.values.toList(), settled.size)
+                location.copy(mapX = x, mapY = y)
+            }
+        }
+        val withParents = parented.map { settled[it.id] ?: it }
         if (withParents.isNotEmpty()) repo.saveLocations(withParents)
 
         val links = mutableListOf<LocationLinkEntity>()
@@ -702,6 +724,7 @@ class WorldForge(
                 ?: mapped.firstOrNull { it.type == "DISTRICT" }
                 ?: mapped.firstOrNull { it.type == "SETTLEMENT" || it.type == "REGION" }
 
+            val (x, y) = MapPlacement.place(listOfNotNull(within), mapped, mapped.size)
             val created = LocationEntity(
                 id = newId(),
                 worldId = worldId,
@@ -710,8 +733,8 @@ class WorldForge(
                 parentId = within?.id,
                 description = "Named when the world was built.",
                 discovered = false,
-                mapX = (mapped.size % 4) * 0.24f + 0.14f,
-                mapY = (mapped.size / 4) * 0.2f + 0.12f
+                mapX = x,
+                mapY = y
             )
             mapped += created
             invented += created
@@ -815,7 +838,12 @@ class WorldForge(
                 text = incoming.text, importance = incoming.importance.coerceIn(1, 5),
                 subjectNames = incoming.subjects.joinToString(", "),
                 keywords = MemoryIndex.keywords(incoming.text).joinToString(" "),
-                storyTime = world.storyTime, turnIndex = 0, pinned = incoming.importance >= 4
+                storyTime = world.storyTime, turnIndex = 0,
+                // Background the builder invented is remembered, never pinned. Pinning is for
+                // what the player wrote and what the story actually established: "Eastgate
+                // formed in the 1980s from university expansion" is colour, and it was
+                // outranking the world's real history because a model rated it a five.
+                pinned = false
             )
         }
         // The player's own words are canon of the highest order, and are always pinned.

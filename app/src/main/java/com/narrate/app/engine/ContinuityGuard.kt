@@ -203,7 +203,13 @@ object ContinuityGuard {
     }
 
     /** Reading the prose back against the state file to catch what the state block omitted. */
-    fun auditNarration(snapshot: WorldSnapshot, narration: String, movedNames: Set<String>): List<Issue> {
+    fun auditNarration(
+        snapshot: WorldSnapshot,
+        narration: String,
+        movedNames: Set<String>,
+        /** Characters as they stand after this turn's state block was applied. */
+        contactsAfter: List<CharacterEntity> = snapshot.characters
+    ): List<Issue> {
         if (narration.isBlank()) return emptyList()
         val issues = mutableListOf<Issue>()
         val here = snapshot.currentLocation?.id
@@ -297,7 +303,48 @@ object ContinuityGuard {
             }
         }
         issues += unrecordedPeople(snapshot, narration)
+        issues += contactOffered(snapshot, narration, contactsAfter)
         return issues
+    }
+
+    /**
+     * Phrases that only mean something once somebody has a way of reaching somebody else.
+     *
+     * "Text me when you get home" is a small, friendly line and a large claim: it says a number
+     * has changed hands. In a real playthrough it was said twice by people whose contact list
+     * entry stayed empty, and two turns later the player's phone had a thread with one of them
+     * that nothing had ever created.
+     */
+    private val contactOffer = Regex(
+        "\\b(?:text|message|call|ring|email|dm)\\s+me\\b|" +
+            "\\bi(?:'ll| will|ll)\\s+(?:text|message|call|ring|email|dm)\\s+you\\b|" +
+            "\\b(?:shoot me a (?:text|message)|hit me up|drop me a line)\\b|" +
+            "\\b(?:my|your|his|her|their)\\s+(?:number|email address)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
+    private fun contactOffered(
+        snapshot: WorldSnapshot,
+        narration: String,
+        contactsAfter: List<CharacterEntity>
+    ): List<Issue> {
+        val offer = contactOffer.find(narration) ?: return emptyList()
+        val inScene = (snapshot.presentNpcs() + snapshot.withinEarshotNpcs()).distinctBy { it.id }
+        if (inScene.isEmpty()) return emptyList()
+        val byId = contactsAfter.associateBy { it.id }
+        // If anybody in the room can now be reached, the exchange was recorded and this is fine.
+        if (inScene.any { ContactChannels.canReach(byId[it.id] ?: it) }) return emptyList()
+        return listOf(
+            Issue(
+                SEVERITY_WARNING,
+                "no-channel",
+                "The narration says \"${offer.value}\", but nobody in the scene " +
+                    "(${inScene.joinToString(", ") { it.name }}) has any contact details with the " +
+                    "player recorded.",
+                "An offer to be contacted is an exchange of details. Either play it out and " +
+                    "record it in \"contacts\" in the same turn, or do not have them say it."
+            )
+        )
     }
 
     /**
@@ -411,18 +458,34 @@ object ContinuityGuard {
         return sentences.all { overThePhone.containsMatchIn(it) }
     }
 
+    /**
+     * A name sitting behind a preposition is not the one doing the verb that follows it.
+     *
+     * "The empty chair beside Liv sat pushed back" was read as Liv sitting down, and Liv was
+     * two miles away, so the turn came back with a teleport warning about a chair.
+     */
+    private val prepositionBefore = Regex(
+        "\\b(about|from|with|for|of|to|than|like|near|beside|behind|without|toward|towards|" +
+            "against|across|since|beyond|past|opposite|besides|between|among)\\s+$",
+        RegexOption.IGNORE_CASE
+    )
+
     /** Crude but effective: did the name appear next to speech or an action verb? */
     private fun speaksOrActs(narration: String, firstName: String): Boolean {
-        val needle = firstName.lowercase()
+        val needle = Regex.escape(firstName.lowercase())
         val pattern = Regex(
-            "$needle\\s+(says|said|asks|asked|replies|replied|answers|answered|shouts|shouted|" +
+            "\\b$needle\\s+(says|said|asks|asked|replies|replied|answers|answered|shouts|shouted|" +
                 "calls|called|calling|" +
                 "whispers|whispered|nods|nodded|steps|stepped|walks|walked|turns|turned|smiles|smiled|" +
                 "laughs|laughed|leans|leaned|grabs|grabbed|hands|handed|looks|looked|stands|stood|sits|sat)"
         )
-        if (pattern.containsMatchIn(narration)) return true
-        return Regex("$needle[^.!?\\n]{0,40}\"").containsMatchIn(narration)
+        if (pattern.findAll(narration).any { standsAlone(narration, it.range.first) }) return true
+        return Regex("\\b$needle[^.!?\\n]{0,40}\"").findAll(narration)
+            .any { standsAlone(narration, it.range.first) }
     }
+
+    private fun standsAlone(narration: String, at: Int): Boolean =
+        !prepositionBefore.containsMatchIn(narration.substring(0, at).takeLast(24))
 
     /** Renders outstanding corrections for injection into the next prompt. */
     fun renderCorrections(corrections: List<String>): String {

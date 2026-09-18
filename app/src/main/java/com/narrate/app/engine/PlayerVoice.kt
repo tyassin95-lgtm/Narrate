@@ -86,6 +86,24 @@ object PlayerVoice {
 
     private data class Routine(val pattern: Regex, val subject: String)
 
+    /** Up to this many words, with no decision and no secret in it, is small talk. */
+    private const val SMALL_TALK_WORDS = 7
+
+    /**
+     * Short questions that are not small talk however short they are.
+     *
+     * "Did you take it?" is four words and the whole scene. Anything reaching into what the
+     * character did, knew, or was doing before now goes back to the player, because the cost of
+     * being wrong there is the app putting words in their mouth about their own past.
+     */
+    private val weighty = Regex(
+        "\\b(did you|didn'?t you|have you|haven'?t you|had you|were you|weren'?t you|was it you|" +
+            "who (is|was|are|were)|why|what did|what happened|where were|where did|is it true|" +
+            "do you know|tell me|how did|since when|what's wrong|what is wrong|what's in|" +
+            "whose|admit)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
     /** Every question still hanging at the end of the narration, in the order they were asked. */
     fun questions(narration: String): List<String> {
         if (narration.isBlank()) return emptyList()
@@ -123,7 +141,19 @@ object PlayerVoice {
         }
 
         val routine = routinePatterns.firstOrNull { it.pattern.containsMatchIn(question) }
-            ?: return OpenQuestion(question, Who.PLAYER, "nothing on record settles it")
+        if (routine == null) {
+            // Small talk: short, no decision in it, nothing secret. "Coffee thing?", "You off
+            // today?", "Long shift?" A character who says nothing to these is not shy, he is
+            // strange, and the player should not have to spend a turn typing "yes".
+            val words = question.trim().trim('?').split(Regex("\\s+")).filter { it.isNotBlank() }
+            if (words.size <= SMALL_TALK_WORDS && !weighty.containsMatchIn(question)) {
+                return OpenQuestion(
+                    question, Who.CHARACTER,
+                    "it is small talk, and answering it costs nothing and decides nothing"
+                )
+            }
+            return OpenQuestion(question, Who.PLAYER, "nothing on record settles it")
+        }
 
         val grounds = established(routine.subject, player, snapshot)
             ?: return OpenQuestion(

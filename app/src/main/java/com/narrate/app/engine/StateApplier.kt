@@ -86,6 +86,13 @@ class StateApplier(private val repo: WorldRepository) {
                 else -> here?.let { locations.firstOrNull { p -> p.id == it.parentId } }
             }
 
+            // On the map it goes beside what it hangs off: its parent, the place it stands
+            // outside of, or the place the player walked from.
+            val (x, y) = MapPlacement.place(
+                anchors = listOfNotNull(parent, beside, here),
+                existing = locations,
+                seed = locations.size
+            )
             val created = LocationEntity(
                 id = newId(),
                 worldId = worldId,
@@ -95,8 +102,8 @@ class StateApplier(private val repo: WorldRepository) {
                 description = "First referenced $originHint.",
                 discovered = true,
                 firstSeenTurn = turnIndex,
-                mapX = (locations.size % 7) * 0.14f + 0.08f,
-                mapY = (locations.size / 7) * 0.16f + 0.1f
+                mapX = x,
+                mapY = y
             )
             locations += created
             repo.saveLocation(created)
@@ -143,6 +150,16 @@ class StateApplier(private val repo: WorldRepository) {
                 return@forEach
             }
             val parent = findLocation(incoming.parent)
+            // Anchored to whatever the turn says it is attached to, so the map keeps meaning
+            // something: the parent first, then anything it was declared to connect to, then
+            // wherever the player is standing when they find it.
+            val neighbours = incoming.connectsTo.mapNotNull { findLocation(it) }
+            val (x, y) = MapPlacement.place(
+                anchors = listOfNotNull(parent) + neighbours +
+                    listOfNotNull(locations.firstOrNull { it.id == snapshot.currentLocation?.id }),
+                existing = locations,
+                seed = locations.size
+            )
             val created = LocationEntity(
                 id = newId(),
                 worldId = worldId,
@@ -155,8 +172,8 @@ class StateApplier(private val repo: WorldRepository) {
                 controlledBy = incoming.controlledBy,
                 discovered = true,
                 firstSeenTurn = turnIndex,
-                mapX = (locations.size % 7) * 0.14f + 0.08f,
-                mapY = (locations.size / 7) * 0.16f + 0.1f
+                mapX = x,
+                mapY = y
             )
             locations += created
             repo.saveLocation(created)
@@ -421,12 +438,16 @@ class StateApplier(private val repo: WorldRepository) {
             val item = repo.resolveItem(items, update.name) ?: return@forEach
             val holder = findCharacter(update.heldBy)
             val place = findLocation(update.location)
+            val nowHeldBy = holder?.id ?: if (update.location != null) null else item.holderId
             val merged = item.copy(
                 // Ownership only moves when the narrator says it has. Handing someone your
                 // jacket makes them the holder, never the owner.
                 ownerId = findCharacter(update.owner)?.id ?: item.ownerId ?: holder?.id,
-                holderId = holder?.id ?: if (update.location != null) null else item.holderId,
-                locationId = place?.id ?: if (holder != null) null else item.locationId,
+                holderId = nowHeldBy,
+                // Something somebody is carrying has no address of its own. A jacket recorded
+                // as held by Liv and also as lying on the pavement she picked it up from is a
+                // jacket in two places, and the digest will offer whichever it reads first.
+                locationId = if (nowHeldBy != null) null else (place?.id ?: item.locationId),
                 state = update.state ?: item.state,
                 updatedAt = System.currentTimeMillis()
             )
@@ -602,7 +623,7 @@ class StateApplier(private val repo: WorldRepository) {
         repo.saveWorld(world)
 
         // 12. Read the prose back and flag anything the state block failed to mention.
-        ContinuityGuard.auditNarration(snapshot, narration, movedNames).forEach {
+        ContinuityGuard.auditNarration(snapshot, narration, movedNames, characters).forEach {
             report.add(it.severity, it.category, it.description, it.resolution)
         }
         if (report.issues.isNotEmpty()) {
@@ -623,6 +644,14 @@ class StateApplier(private val repo: WorldRepository) {
                 "The player's own position won: they are at " +
                     "${locations.firstOrNull { it.id == playerNow.currentLocationId }?.name ?: "their recorded place"}."
             )
+        }
+
+        // Sweep the same invariant over anything an older turn left in two places at once.
+        val doubled = items.filter { it.holderId != null && it.locationId != null }
+        if (doubled.isNotEmpty()) {
+            val fixed = doubled.map { it.copy(locationId = null) }
+            fixed.forEach { item -> items[items.indexOfFirst { it.id == item.id }] = item }
+            repo.saveItems(fixed)
         }
 
         val here = world.currentLocationId

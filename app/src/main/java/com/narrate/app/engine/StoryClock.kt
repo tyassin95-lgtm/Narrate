@@ -30,6 +30,77 @@ object StoryClock {
         return Reading(day, hour * 60 + minute)
     }
 
+    /** Minutes from [previous] to [next], when both can be read. Negative if it went backwards. */
+    fun elapsed(previous: String, next: String): Int? {
+        val before = read(previous) ?: return null
+        val after = read(next) ?: return null
+        return (after.day - before.day) * DAY_MINUTES + (after.minutes - before.minutes)
+    }
+
+    private const val DAY_MINUTES = 24 * 60
+
+    private val numberWords = mapOf(
+        "a" to 1, "an" to 1, "one" to 1, "two" to 2, "three" to 3, "four" to 4, "five" to 5,
+        "six" to 6, "seven" to 7, "eight" to 8, "nine" to 9, "ten" to 10, "eleven" to 11,
+        "twelve" to 12, "fifteen" to 15, "twenty" to 20, "thirty" to 30, "forty" to 40,
+        "forty-five" to 45, "fortyfive" to 45, "fifty" to 50, "sixty" to 60, "ninety" to 90
+    )
+
+    private val elapsedPhrase = Regex(
+        "\\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|" +
+            "twenty|thirty|forty-five|fortyfive|forty|fifty|sixty|ninety|half an|\\d{1,3})\\s+" +
+            "(minute|minutes|hour|hours)\\s+(?:later|after|pass|passed|passes|go by|went by|gone by)",
+        RegexOption.IGNORE_CASE
+    )
+
+    /**
+     * How long the prose says has gone by, when it says so in plain words.
+     *
+     * A playthrough had the narrator write "twenty minutes later" three turns running while the
+     * clock moved four minutes each time, and then tell the player that forty minutes remained
+     * before an appointment that was an hour and a half away. Prose that states an interval is
+     * making a claim about the clock, and the clock is the thing that has to agree with it.
+     */
+    fun statedElapsed(narration: String): Int? {
+        val match = elapsedPhrase.find(narration) ?: return null
+        val word = match.groupValues[1].lowercase()
+        val count = when {
+            word == "half an" -> return if (match.groupValues[2].startsWith("hour", true)) 30 else null
+            word.toIntOrNull() != null -> word.toInt()
+            else -> numberWords[word] ?: return null
+        }
+        return if (match.groupValues[2].startsWith("hour", true)) count * 60 else count
+    }
+
+    /** Hours when it is dark wherever you stand, and hours when it plainly is not. */
+    fun definitelyDark(minutes: Int): Boolean = minutes in 0 until 4 * 60
+    fun definitelyLight(minutes: Int): Boolean = minutes in 10 * 60 until 15 * 60
+
+    private val darkCue = Regex(
+        "\\b(sunlight|sunshine|midday sun|afternoon sun|broad daylight|noon light|" +
+            "morning light|bright (?:sun|daylight))\\b",
+        RegexOption.IGNORE_CASE
+    )
+    private val lightCue = Regex(
+        "\\b(pitch dark|darkness outside|middle of the night|moonlight|starlight|" +
+            "dead of night|night sky)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
+    /**
+     * A phrase in the prose that the clock says cannot be true.
+     *
+     * Only the two ends of the day are checked - four in the morning and the middle of the
+     * afternoon - because everything between them depends on the season, the latitude and
+     * whatever sun the world has, and none of those are the app's business.
+     */
+    fun lightContradiction(storyTime: String, narration: String): String? {
+        val reading = read(storyTime) ?: return null
+        if (definitelyDark(reading.minutes)) return darkCue.find(narration)?.value
+        if (definitelyLight(reading.minutes)) return lightCue.find(narration)?.value
+        return null
+    }
+
     /**
      * True when the clock has plainly gone backwards.
      *

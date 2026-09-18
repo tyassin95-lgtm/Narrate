@@ -110,6 +110,16 @@ class TurnDirector(
             }
         }
 
+        // Nine turns of waiting at a table ended only when the player thought of an exit
+        // themselves. If the scene has stalled and the narrator has not offered a way out of
+        // it, the app offers one - after the repair pass, so a completion cannot swallow it.
+        SceneMomentum.skipSuggestion(snapshot)?.let { skip ->
+            val alreadyOffered = parsed.choices.any {
+                it.label.contains("time pass", true) || it.label.contains("until", true)
+            }
+            if (!alreadyOffered) parsed = parsed.copy(choices = parsed.choices + skip)
+        }
+
         if (verdict.rejected.isNotEmpty()) {
             repo.saveIssues(
                 ContinuityGuard.Report().apply {
@@ -180,6 +190,44 @@ class TurnDirector(
                             "\"${applied.world.storyTime}\".",
                         "Time only moves forward within a day. Carry on from the later time, or " +
                             "say plainly that a new day has started."
+                    )
+                }.toEntities(worldId, turnIndex)
+            )
+        }
+
+        // Prose that states an interval is making a claim about the clock. "Twenty minutes
+        // later" while story_time moves four minutes is the arithmetic error the player kept
+        // reading as the world losing track of its own afternoon.
+        val claimed = StoryClock.statedElapsed(parsed.narration)
+        val actual = StoryClock.elapsed(previousTime, applied.world.storyTime)
+        if (claimed != null && actual != null && actual >= 0) {
+            val slack = maxOf(5, claimed / 2)
+            if (kotlin.math.abs(actual - claimed) > slack) {
+                repo.saveIssues(
+                    ContinuityGuard.Report().apply {
+                        add(
+                            ContinuityGuard.SEVERITY_WARNING,
+                            "clock",
+                            "The narration says about $claimed minutes went by, but story_time " +
+                                "moved $actual: \"$previousTime\" to \"${applied.world.storyTime}\".",
+                            "The clock is what the world runs on. When the prose says how long " +
+                                "something took, story_time moves by that much."
+                        )
+                    }.toEntities(worldId, turnIndex)
+                )
+            }
+        }
+
+        // Four in the morning does not have sunlight in it, whatever the sentence wanted.
+        StoryClock.lightContradiction(applied.world.storyTime, parsed.narration)?.let { phrase ->
+            repo.saveIssues(
+                ContinuityGuard.Report().apply {
+                    add(
+                        ContinuityGuard.SEVERITY_WARNING,
+                        "clock",
+                        "The narration describes \"$phrase\" at ${applied.world.storyTime}.",
+                        "Light, dark and the look of the sky follow story_time. Check the hour " +
+                            "before describing the sky."
                     )
                 }.toEntities(worldId, turnIndex)
             )
@@ -382,6 +430,11 @@ class TurnDirector(
                 appendLine()
                 appendLine(ContinuityGuard.renderCorrections(previous))
             }
+        }
+
+        SceneMomentum.render(snapshot).takeIf { it.isNotBlank() }?.let {
+            appendLine()
+            append(it)
         }
 
         StyleWatch.render(snapshot).takeIf { it.isNotBlank() }?.let {

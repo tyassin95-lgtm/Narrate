@@ -73,9 +73,48 @@ object StyleWatch {
             .map { it.key }
     }
 
+    /**
+     * Whole phrases the narrator has written more than once.
+     *
+     * "He stays exactly where he is", "Nothing else moves at his table", "the agreed time" -
+     * a turn can avoid every repeated word and still be the previous turn with the furniture
+     * moved, and a phrase is what a reader actually notices.
+     */
+    fun repeatedPhrases(snapshot: WorldSnapshot): List<String> {
+        val turns = snapshot.recentTurns.takeLast(WINDOW)
+        if (turns.size < 2) return emptyList()
+        val counts = mutableMapOf<String, Int>()
+        turns.forEach { turn ->
+            val words = MarkupParser.stripMarkup(turn.narration).lowercase()
+                .replace(Regex("[^a-z ]"), " ")
+                .split(Regex("\\s+"))
+                .filter { it.isNotBlank() }
+            val seen = mutableSetOf<String>()
+            for (index in 0..words.size - PHRASE) {
+                val phrase = words.subList(index, index + PHRASE).joinToString(" ")
+                if (seen.add(phrase)) counts[phrase] = (counts[phrase] ?: 0) + 1
+            }
+        }
+        return counts.filterValues { it >= 2 }
+            .entries
+            .sortedByDescending { it.value }
+            .take(5)
+            .map { it.key }
+    }
+
+    /** Words in a phrase worth noticing. */
+    private const val PHRASE = 5
+
     /** What to tell the narrator about its own habits. */
     fun render(snapshot: WorldSnapshot): String {
         val overused = overusedImages(snapshot)
+        val phrases = repeatedPhrases(snapshot)
+        if (overused.isEmpty() && phrases.isNotEmpty()) {
+            return buildString {
+                appendLine("## SENTENCES YOU HAVE ALREADY WRITTEN (do not write them again)")
+                phrases.forEach { appendLine("- \"$it...\"") }
+            }
+        }
         if (overused.isEmpty()) return ""
         return buildString {
             appendLine("## IMAGES YOU HAVE ALREADY USED (do not reach for them again)")
@@ -87,6 +126,11 @@ object StyleWatch {
                     "before. If nothing physical has changed, write less rather than describing the " +
                     "same room again."
             )
+            if (phrases.isNotEmpty()) {
+                appendLine()
+                appendLine("Sentences you have already written, word for word. Do not write them again:")
+                phrases.forEach { appendLine("- \"$it...\"") }
+            }
         }
     }
 }

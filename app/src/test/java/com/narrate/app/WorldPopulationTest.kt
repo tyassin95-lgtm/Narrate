@@ -77,7 +77,11 @@ class WorldPopulationTest {
         NewLocation(name = "Eastgate Rentals", type = "BUILDING", description = "Four flats.")
     )
 
-    private suspend fun build(characters: List<NewCharacter>, start: String = "Maple Street") =
+    private suspend fun build(
+        characters: List<NewCharacter>,
+        start: String = "Maple Street",
+        facts: List<com.narrate.app.engine.MemoryDelta> = emptyList()
+    ) =
         forge.persist(
             concept = WorldConcept(
                 name = "Calder City",
@@ -97,7 +101,7 @@ class WorldPopulationTest {
                 threads = emptyList(),
                 startingLocation = start,
                 startingTime = "Day 1, morning",
-                facts = emptyList()
+                facts = facts
             ),
             playStyle = PlayStyle.GENTLE
         )
@@ -161,6 +165,44 @@ class WorldPopulationTest {
             here.any { it.name == "Liv Mercer" }
         )
         assertTrue("and the rest are somewhere of their own", cast.all { it.currentLocationId != null })
+    }
+
+    @Test
+    fun `background the builder invented is remembered but never pinned`() = runBlocking {
+        // A model rated its own invention a five, and "Eastgate formed in the 1980s from
+        // university expansion" started outranking what the player had actually written.
+        val world = build(
+            characters = listOf(NewCharacter(name = "Liv Mercer", role = "designer", location = "Maple Street")),
+            facts = listOf(
+                com.narrate.app.engine.MemoryDelta(
+                    text = "Eastgate formed in the 1980s from university expansion.",
+                    kind = "FACT",
+                    importance = 5
+                )
+            )
+        )
+        val memories = repo.memoryDao.all(world.id)
+        val invented = memories.first { it.text.contains("1980s") }
+        assertTrue("it is still remembered", invented.text.isNotBlank())
+        assertEquals("but it does not outrank what the player wrote", false, invented.pinned)
+        assertTrue(
+            "which is pinned",
+            memories.any { it.pinned && it.text.contains("The player wrote this world themselves") }
+        )
+    }
+
+    @Test
+    fun `a room is drawn beside the building it is in`() = runBlocking {
+        val world = build(listOf(NewCharacter(name = "Liv Mercer", role = "designer", location = "Maple Street")))
+        val places = repo.locationDao.all(world.id)
+        val hospital = places.first { it.name == "Calder General Hospital" }
+        val ward = places.first { it.name == "The Night Ward" }
+        val distance = kotlin.math.hypot(hospital.mapX - ward.mapX, hospital.mapY - ward.mapY)
+        assertTrue("the ward is inside the hospital and should look it: $distance", distance < 0.2f)
+        assertTrue(
+            "and no two places sit on top of each other",
+            places.all { a -> places.none { b -> b.id != a.id && kotlin.math.hypot(a.mapX - b.mapX, a.mapY - b.mapY) < 0.05f } }
+        )
     }
 
     @Test

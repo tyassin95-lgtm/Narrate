@@ -517,7 +517,7 @@ class TurnPipelineTest {
         scripted.enqueue(
             """
             ===NARRATION===
-            She stops on the step and looks back at you. "Do you always walk strangers home?"
+            She stops on the step and looks back at you. "So are you going to tell me what you were doing out at two in the morning?"
             ===CHOICES===
             - Say nothing
             - Shrug
@@ -534,7 +534,7 @@ class TurnPipelineTest {
 
         val prompt = scripted.prompts.first()
         assertTrue(prompt.contains("QUESTIONS PUT TO VALE"))
-        assertTrue(prompt.contains("Do you always walk strangers home?"))
+        assertTrue(prompt.contains("what you were doing out at two in the morning?"))
         assertTrue(prompt.contains("the player's to answer"))
         assertTrue(prompt.contains("written as the words they would say"))
     }
@@ -771,6 +771,66 @@ class TurnPipelineTest {
         assertTrue(repo.usageForWorld(worldId).isEmpty())
         assertTrue(repo.characterDao.all(worldId).isEmpty())
         assertTrue(repo.turnDao.all(worldId).isEmpty())
+    }
+
+    @Test
+    fun `a scene that has stalled gets a way out of it, whatever the narrator offered`() = runBlocking {
+        // Four turns of the player passing the time, exactly as the playthrough ran.
+        listOf("Sit down and wait", "Check the time", "Watch the water", "Wait a bit longer")
+            .forEachIndexed { index, input ->
+                scripted.enqueue(
+                    """
+                    ===NARRATION===
+                    The tide is where it was. Nothing has changed on the quay.
+                    ===CHOICES===
+                    - Check the time again
+                    - Keep watching the water
+                    - Wait a little longer
+                    ===STATE===
+                    {"story_time": "Day 1, 9:0$index AM", "summary": "Waiting."}
+                    ===END===
+                    """.trimIndent()
+                )
+                director.take(worldId, input, "ACTION")
+            }
+
+        val last = repo.turnDao.all(worldId).last()
+        val offered = last.choicesJson
+        assertTrue(
+            "the menu of ways to keep waiting is refused: ${'$'}offered",
+            !offered.contains("Check the time") && !offered.contains("Keep watching")
+        )
+        assertTrue(
+            "and the player is handed an exit instead: ${'$'}offered",
+            offered.contains("Let the time pass")
+        )
+        val issues = repo.issueDao.forTurn(worldId, 3)
+        assertTrue(issues.any { it.category == "suggested-action" })
+    }
+
+    @Test
+    fun `a turn whose prose and clock disagree about the hour is written down`() = runBlocking {
+        scripted.enqueue(minimalResponse("Day 1, 9:00 AM"))
+        director.take(worldId, "Look around", "ACTION")
+
+        scripted.enqueue(
+            """
+            ===NARRATION===
+            Twenty minutes later the bell on the chandler's door goes and somebody comes out.
+            ===CHOICES===
+            - Go over
+            - Stay where you are
+            ===STATE===
+            {"story_time": "Day 1, 9:03 AM", "summary": "Someone comes out."}
+            ===END===
+            """.trimIndent()
+        )
+        director.take(worldId, "Watch the door", "ACTION")
+
+        val issues = repo.issueDao.forTurn(worldId, 1)
+        val clock = issues.single { it.category == "clock" }
+        assertTrue(clock.description.contains("20 minutes"))
+        assertTrue(clock.description.contains("moved 3"))
     }
 
     private fun minimalResponse(storyTime: String) = """
