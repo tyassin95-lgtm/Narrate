@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the export folder is ever shared, and only for as long as the share sheet is open. -->
+<paths>
+    <cache-path name="transcripts" path="exports/" />
+</paths>

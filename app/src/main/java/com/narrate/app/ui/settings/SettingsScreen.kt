@@ -1,6 +1,7 @@
 package com.narrate.app.ui.settings
 
 import android.app.Application
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,11 +22,13 @@ import androidx.compose.runtime.*
 
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -35,7 +38,9 @@ import com.narrate.app.ai.ProviderRegistry
 import com.narrate.app.container
 import com.narrate.app.ai.ModelPricing
 import com.narrate.app.data.entity.UsageEntity
+import com.narrate.app.data.entity.WorldEntity
 import com.narrate.app.data.prefs.AppSettings
+import com.narrate.app.engine.TranscriptExport
 import com.narrate.app.engine.UsageGroup
 import com.narrate.app.engine.UsageRecorder
 import com.narrate.app.engine.UsageSummary
@@ -133,7 +138,40 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setAutoImages(value: Boolean) = store.setAutoGenerateSceneImages(value)
     fun setSimulateOffscreen(value: Boolean) = store.setSimulateOffscreenWorld(value)
     fun setStrictContinuity(value: Boolean) = store.setStrictContinuity(value)
+    fun setDeveloperMode(value: Boolean) = store.setDeveloperMode(value)
     fun clearMessage() { _message.value = null }
+
+    /** Saves worth exporting, newest first. */
+    val worlds: StateFlow<List<WorldEntity>> = repository.observeWorlds()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Writes a world's whole playthrough to a file in the cache and hands back the file.
+     *
+     * Nothing leaves the device here: the file is written, and what happens to it next is
+     * whatever the player picks from the share sheet.
+     */
+    fun exportTranscript(world: WorldEntity, onReady: (java.io.File) -> Unit) {
+        viewModelScope.launch {
+            val markdown = TranscriptExport.build(repository, world.id)
+            if (markdown == null) {
+                _message.value = "That world could not be read."
+                return@launch
+            }
+            val written = runCatching {
+                val folder = java.io.File(getApplication<Application>().cacheDir, "exports").apply { mkdirs() }
+                // One file per world, overwritten each time, so exports do not pile up.
+                java.io.File(folder, TranscriptExport.fileName(world)).apply { writeText(markdown) }
+            }
+            written.fold(
+                onSuccess = {
+                    _message.value = "${world.name}: ${world.turnCount} turns written to ${it.name}."
+                    onReady(it)
+                },
+                onFailure = { _message.value = it.message ?: "The transcript could not be written." }
+            )
+        }
+    }
 }
 
 @Composable
@@ -274,7 +312,101 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 "${settings.memoryRetrievalCount} remembered facts are selected for each turn, plus everything pinned."
             ) { viewModel.setMemoryCount(it.toInt()) }
 
+            Spacer(Modifier.height(22.dp))
+            Text("Developer", style = MaterialTheme.typography.headlineMedium, color = NarrateColors.TextPrimary)
+            Spacer(Modifier.height(8.dp))
+            SettingToggle(
+                "Developer options",
+                "Adds a transcript export: every turn's narration, what you typed, the suggested " +
+                    "actions you were offered and anything the continuity guard flagged, as one " +
+                    "markdown file you can read or send on.",
+                settings.developerMode,
+                viewModel::setDeveloperMode
+            )
+            if (settings.developerMode) {
+                Spacer(Modifier.height(10.dp))
+                TranscriptPanel(viewModel)
+            }
+
             Spacer(Modifier.height(40.dp))
+        }
+    }
+}
+
+/**
+ * One row per save, with a way to write its transcript out and hand it to another app.
+ *
+ * The file is written into the app's own cache and shared through a content URI, so nothing
+ * is copied into shared storage and the permission lasts only as long as the share sheet.
+ */
+@Composable
+private fun TranscriptPanel(viewModel: SettingsViewModel) {
+    val context = LocalContext.current
+    val worlds by viewModel.worlds.collectAsStateWithLifecycle()
+
+    fun share(file: java.io.File) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/markdown"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, file.name)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching { context.startActivity(Intent.createChooser(send, "Send transcript")) }
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(NarrateColors.Surface, RoundedCornerShape(8.dp))
+            .padding(12.dp)
+    ) {
+        Text("Export a playthrough", style = MaterialTheme.typography.titleMedium, color = NarrateColors.TextPrimary)
+        Spacer(Modifier.height(6.dp))
+        if (worlds.isEmpty()) {
+            Text(
+                "No worlds to export yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = NarrateColors.TextMuted
+            )
+            return@Column
+        }
+        Text(
+            "The file contains world and story content only. Your API keys are never part of it.",
+            style = MaterialTheme.typography.bodySmall,
+            color = NarrateColors.TextMuted
+        )
+        Spacer(Modifier.height(10.dp))
+        worlds.forEach { world ->
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        world.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = NarrateColors.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "${world.turnCount} turns - ${world.storyTime}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = NarrateColors.TextMuted
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Button(
+                    onClick = { viewModel.exportTranscript(world) { file -> share(file) } },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NarrateColors.Accent,
+                        contentColor = androidx.compose.ui.graphics.Color.White
+                    )
+                ) {
+                    Text("Export")
+                }
+            }
         }
     }
 }

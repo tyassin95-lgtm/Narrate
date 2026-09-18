@@ -53,6 +53,10 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
   written down - where they are going, what they do, why they are so quiet - they answer it
   themselves, in their own voice. Every decision, secret, feeling and commitment stays yours,
   and anything the app cannot confidently place is left for you.
+- **Export a playthrough.** Turn on developer options in Settings and any world can be written
+  out as one markdown file: every turn's prose, what you typed, the options you were offered,
+  what the continuity guard flagged, and where everything ended up. World content only - the
+  file is written to the app's own cache and goes wherever you send it.
 - **The scene is between two people.** A turn where the other person speaks six times and
   your character says nothing is a monologue with a witness, so ordinary questions get
   answered in the same scene they are asked, and a turn never ends on small talk. When a turn
@@ -233,7 +237,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 284 tests covering parsing, continuity, canon, imagery, cost and persistence
+./gradlew testDebugUnitTest         # 292 tests covering parsing, continuity, canon, imagery, cost and persistence
 ```
 
 Keep the keystore. Android identifies an app by its signing key, so a release built with a
@@ -300,7 +304,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 284 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 292 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and

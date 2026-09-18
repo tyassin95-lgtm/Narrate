@@ -23,6 +23,8 @@ data class AppSettings(
     val autoGenerateSceneImages: Boolean = false,
     val simulateOffscreenWorld: Boolean = true,
     val strictContinuity: Boolean = true,
+    /** Unlocks the transcript export. Off by default; it changes nothing about play. */
+    val developerMode: Boolean = false,
     val configuredProviders: Set<ProviderId> = emptySet()
 ) {
     val hasNarrationModel: Boolean get() = narration.isSet
@@ -65,6 +67,7 @@ class SettingsStore(context: Context) {
         autoGenerateSceneImages = prefs.getBoolean("auto_images", false),
         simulateOffscreenWorld = prefs.getBoolean("simulate_offscreen", true),
         strictContinuity = prefs.getBoolean("strict_continuity", true),
+        developerMode = prefs.getBoolean("developer_mode", false),
         configuredProviders = ProviderId.entries.filter { secure.get(keyName(it)).isNotBlank() }.toSet()
     )
 
@@ -104,6 +107,7 @@ class SettingsStore(context: Context) {
     fun setAutoGenerateSceneImages(value: Boolean) = edit { putBoolean("auto_images", value) }
     fun setSimulateOffscreenWorld(value: Boolean) = edit { putBoolean("simulate_offscreen", value) }
     fun setStrictContinuity(value: Boolean) = edit { putBoolean("strict_continuity", value) }
+    fun setDeveloperMode(value: Boolean) = edit { putBoolean("developer_mode", value) }
 
     /** Effective simulation choice: falls back to the narration model when unset. */
     fun simulationOrNarration(): ModelChoice =

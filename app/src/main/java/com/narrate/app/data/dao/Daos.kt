@@ -183,6 +183,8 @@ interface ContinuityIssueDao {
     fun observeAll(worldId: String): Flow<List<ContinuityIssueEntity>>
     @Query("SELECT * FROM continuity_issues WHERE worldId = :worldId AND turnIndex = :turnIndex")
     suspend fun forTurn(worldId: String, turnIndex: Int): List<ContinuityIssueEntity>
+    @Query("SELECT * FROM continuity_issues WHERE worldId = :worldId ORDER BY turnIndex ASC, createdAt ASC")
+    suspend fun all(worldId: String): List<ContinuityIssueEntity>
     @Query("DELETE FROM continuity_issues WHERE worldId = :worldId AND turnIndex >= :from")
     suspend fun deleteFrom(worldId: String, from: Int)
     @Query("DELETE FROM continuity_issues WHERE worldId = :worldId") suspend fun deleteByWorld(worldId: String)
