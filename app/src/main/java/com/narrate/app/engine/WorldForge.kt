@@ -596,7 +596,10 @@ class WorldForge(
                 atmosphere = incoming.atmosphere,
                 notableFeatures = incoming.notableFeatures,
                 controlledBy = incoming.controlledBy,
-                discovered = true,
+                // The world is built whole; the player's map is not. Nothing is on it until
+                // they have stood in it, been told about it, or found it - see the knowledge
+                // seeding at the end of this method.
+                discovered = false,
                 mapX = (index % 4) * 0.24f + 0.14f,
                 mapY = (index / 4) * 0.2f + 0.12f
             )
@@ -884,9 +887,79 @@ class WorldForge(
         }
         if (facts.isNotEmpty()) repo.saveMemories(facts)
 
+        // What the player's character knows on turn one.
+        //
+        // This is the whole difference between a world you are inhabiting and a world you have
+        // been handed the notes for. They know the place they are standing in and whatever
+        // contains it, the people the opening scene actually puts in front of them, their own
+        // home, and what is in their pockets. The rest of the city, and everybody in it, they
+        // will have to find out about.
+        seedKnowledge(
+            worldId = worldId,
+            world = world,
+            player = playerCharacter,
+            startId = startId,
+            locations = mapped,
+            npcs = placedNpcs,
+            openingCast = placedNpcs.filter { it.currentLocationId == startId }
+        )
+
         val finished = world.copy(playerCharacterId = playerCharacter.id, currentLocationId = startId)
         repo.saveWorld(finished)
         return finished
+    }
+
+    /**
+     * The player's starting knowledge, and the map that follows from it.
+     *
+     * Deliberately small. A place is on the map because they are standing in it or it contains
+     * the place they are standing in; a person is in the cast because they are in the opening
+     * scene. Their own home is theirs to know. Everything else in the generated world exists
+     * so that people have somewhere to be, and stays out of sight until the story shows it.
+     */
+    private suspend fun seedKnowledge(
+        worldId: String,
+        world: WorldEntity,
+        player: CharacterEntity,
+        startId: String?,
+        locations: List<LocationEntity>,
+        npcs: List<CharacterEntity>,
+        openingCast: List<CharacterEntity>
+    ) {
+        val rows = mutableListOf<KnowledgeEntity>()
+        val seen = mutableSetOf<String>()
+
+        fun place(id: String?, source: String, detail: String) {
+            val location = locations.firstOrNull { it.id == id } ?: return
+            if (!seen.add(location.id)) return
+            rows += PlayerKnowledge.row(
+                worldId, PlayerKnowledge.LOCATION, location.id, location.name,
+                PlayerKnowledge.EXISTS, source = source, sourceDetail = detail,
+                storyTime = world.storyTime
+            )
+        }
+
+        // Where they are, and everything it sits inside.
+        var current = locations.firstOrNull { it.id == startId }
+        var depth = 0
+        while (current != null && depth < 6) {
+            place(current.id, PlayerKnowledge.VISITED, "where the story opens")
+            current = current.parentId?.let { id -> locations.firstOrNull { it.id == id } }
+            depth++
+        }
+        // And home, which a person knows the way to.
+        place(player.homeLocationId, PlayerKnowledge.VISITED, "where they live")
+
+        openingCast.forEach { npc ->
+            rows += PlayerKnowledge.onMeeting(worldId, npc, 0, world.storyTime, emptySet())
+        }
+
+        if (rows.isNotEmpty()) repo.saveKnowledge(rows)
+
+        val known = rows.filter { it.subjectType == PlayerKnowledge.LOCATION }.map { it.subjectId }.toSet()
+        val corrected = locations.filter { it.discovered != (it.id in known) }
+            .map { it.copy(discovered = it.id in known) }
+        if (corrected.isNotEmpty()) repo.saveLocations(corrected)
     }
 
     private companion object {

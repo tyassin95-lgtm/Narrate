@@ -76,6 +76,21 @@ interface ItemDao {
 }
 
 @Dao
+interface KnowledgeDao {
+    @Upsert suspend fun upsert(row: KnowledgeEntity)
+    @Upsert suspend fun upsertAll(rows: List<KnowledgeEntity>)
+    @Query("SELECT * FROM player_knowledge WHERE worldId = :worldId ORDER BY turnIndex ASC")
+    fun observeAll(worldId: String): Flow<List<KnowledgeEntity>>
+    @Query("SELECT * FROM player_knowledge WHERE worldId = :worldId ORDER BY turnIndex ASC")
+    suspend fun all(worldId: String): List<KnowledgeEntity>
+    @Query("SELECT * FROM player_knowledge WHERE worldId = :worldId AND subjectId = :subjectId")
+    suspend fun forSubject(worldId: String, subjectId: String): List<KnowledgeEntity>
+    @Query("DELETE FROM player_knowledge WHERE worldId = :worldId AND turnIndex >= :from")
+    suspend fun deleteFrom(worldId: String, from: Int)
+    @Query("DELETE FROM player_knowledge WHERE worldId = :worldId") suspend fun deleteByWorld(worldId: String)
+}
+
+@Dao
 interface FactionDao {
     @Upsert suspend fun upsert(faction: FactionEntity)
     @Upsert suspend fun upsertAll(factions: List<FactionEntity>)

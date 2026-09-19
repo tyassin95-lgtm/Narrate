@@ -8,6 +8,7 @@ import com.narrate.app.core.AppJson
 import com.narrate.app.data.entity.*
 import com.narrate.app.engine.Choice
 import com.narrate.app.engine.ImageSubject
+import com.narrate.app.engine.WorldActions
 import com.narrate.app.ui.markup.MarkupParser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -45,6 +46,10 @@ data class PlayUiState(
         get() = characters.filter {
             !it.isPlayer && it.currentLocationId == world?.currentLocationId && it.status == "ALIVE"
         }
+
+    /** Whether "go home" is worth offering: it is not, when they are already standing in it. */
+    val canGoHome: Boolean
+        get() = player?.homeLocationId != null && player.homeLocationId != world?.currentLocationId
 }
 
 /** Drives one world's play session: the feed, the turn loop, and on-demand imagery. */
@@ -103,6 +108,24 @@ class PlayViewModel(application: Application, private val worldId: String) : And
         if (input.isBlank()) return
         viewModelScope.launch {
             runTurn { container.turnDirector.take(worldId, input.trim(), kind) }
+        }
+    }
+
+    /**
+     * The time controls: skip ahead, go home, sleep.
+     *
+     * These used to be suggested actions, which meant the player spent their move choosing to
+     * do nothing in order to reach the part where something happened. They are buttons now.
+     * The turn still goes through the narrator - the world has to run while the time passes -
+     * but the player never has to pick "wait a little longer" off a menu again.
+     */
+    fun worldAction(kind: String) {
+        viewModelScope.launch {
+            val snapshot = repo.snapshot(worldId) ?: return@launch
+            if (!WorldActions.available(kind, snapshot)) return@launch
+            runTurn {
+                container.turnDirector.take(worldId, WorldActions.playerInput(kind, snapshot), kind)
+            }
         }
     }
 

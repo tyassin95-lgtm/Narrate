@@ -46,6 +46,7 @@ import coil.compose.AsyncImage
 import com.narrate.app.data.entity.ImageEntity
 import com.narrate.app.data.entity.TurnEntity
 import com.narrate.app.engine.Choice
+import com.narrate.app.engine.WorldActions
 import com.narrate.app.engine.ImageSubject
 import com.narrate.app.ui.components.Avatar
 import com.narrate.app.ui.components.ErrorBanner
@@ -163,6 +164,15 @@ fun PlayScreen(
                     }
                 )
             }
+
+            // Time is a control, not a suggestion. Skipping ahead, going home and sleeping are
+            // the three things every player does constantly and nobody has ever enjoyed
+            // picking off a menu of suggested actions.
+            TimeControls(
+                enabled = !state.loading && state.turns.isNotEmpty(),
+                canGoHome = state.canGoHome,
+                onAction = viewModel::worldAction
+            )
 
             InputBar(
                 value = input,
@@ -548,6 +558,61 @@ private fun SuggestedActions(
                 )
             }
         }
+    }
+}
+
+/**
+ * Skip time, go home, sleep.
+ *
+ * These take a turn like any other - the world has to run while the hours pass - but they are
+ * never suggestions, because a suggestion is a decision and none of these is one. Before they
+ * existed the only way out of a dead evening was to pick "wait a little longer" off the menu,
+ * which is the interaction model that made this game tedious to play.
+ */
+@Composable
+private fun TimeControls(
+    enabled: Boolean,
+    canGoHome: Boolean,
+    onAction: (String) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        TimeControl("Skip time", enabled, Modifier.weight(1f)) { onAction(WorldActions.SKIP) }
+        TimeControl("Go home", enabled && canGoHome, Modifier.weight(1f)) { onAction(WorldActions.HOME) }
+        TimeControl("Sleep", enabled, Modifier.weight(1f)) { onAction(WorldActions.SLEEP) }
+    }
+}
+
+@Composable
+private fun TimeControl(
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(NarrateColors.SurfaceElevated)
+            .border(
+                1.dp,
+                if (enabled) NarrateColors.Divider else NarrateColors.SurfaceHigh,
+                RoundedCornerShape(8.dp)
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 9.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (enabled) NarrateColors.TextSecondary else NarrateColors.TextMuted,
+            maxLines = 1
+        )
     }
 }
 

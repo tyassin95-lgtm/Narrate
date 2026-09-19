@@ -14,6 +14,7 @@ import com.narrate.app.data.entity.WorldEntity
 import com.narrate.app.data.prefs.SettingsStore
 import com.narrate.app.data.repo.WorldRepository
 import com.narrate.app.engine.TurnDirector
+import com.narrate.app.engine.WorldActions
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -774,7 +775,7 @@ class TurnPipelineTest {
     }
 
     @Test
-    fun `a scene that has stalled gets a way out of it, whatever the narrator offered`() = runBlocking {
+    fun `a stalled scene has its filler refused and is put to the narrator as a scene to end`() = runBlocking {
         // Four turns of the player passing the time, exactly as the playthrough ran.
         listOf("Sit down and wait", "Check the time", "Watch the water", "Wait a bit longer")
             .forEachIndexed { index, input ->
@@ -798,14 +799,60 @@ class TurnPipelineTest {
         val offered = last.choicesJson
         assertTrue(
             "the menu of ways to keep waiting is refused: ${'$'}offered",
-            !offered.contains("Check the time") && !offered.contains("Keep watching")
-        )
-        assertTrue(
-            "and the player is handed an exit instead: ${'$'}offered",
-            offered.contains("Let the time pass")
+            !offered.contains("Check the time") && !offered.contains("Keep watching") &&
+                !offered.contains("Wait a little longer")
         )
         val issues = repo.issueDao.forTurn(worldId, 3)
         assertTrue(issues.any { it.category == "suggested-action" })
+
+        // And the way out is no longer something the player has to find on a menu: the
+        // narrator is told the scene has stopped, and the screen has a Skip time button.
+        scripted.enqueue(minimalResponse("Day 1, 9:30 AM"))
+        director.take(worldId, "Wait", "ACTION")
+        assertTrue(scripted.lastPrompt.contains("THIS SCENE HAS STOPPED MOVING"))
+    }
+
+    @Test
+    fun `skipping time moves the clock by hours even when the narrator does not`() = runBlocking {
+        scripted.enqueue(minimalResponse("Day 1, 9:00 AM"))
+        director.take(worldId, "Look around", "ACTION")
+
+        // The narrator's reply moves the clock three minutes. The button promised an hour.
+        scripted.enqueue(minimalResponse("Day 1, 9:03 AM"))
+        director.take(worldId, WorldActions.playerInput(WorldActions.SKIP, repo.snapshot(worldId)!!), WorldActions.SKIP)
+
+        val world = repo.world(worldId)!!
+        assertEquals("Day 1, 10:00 AM", world.storyTime)
+        assertTrue(
+            "and the narrator was told this was a time control, not an ordinary turn",
+            scripted.lastPrompt.contains("THE PLAYER USED A TIME CONTROL")
+        )
+        assertTrue(scripted.lastPrompt.contains("the world ran"))
+    }
+
+    @Test
+    fun `a model that refuses the player's turn does not write it into their world`() = runBlocking {
+        scripted.enqueue(minimalResponse("Day 1, 9:00 AM"))
+        director.take(worldId, "Look around", "ACTION")
+        val before = repo.turnDao.all(worldId).size
+
+        // Both the first reply and the reframed retry come back as the model talking.
+        scripted.enqueue("I'm sorry, but I can't help with that request.")
+        scripted.enqueue("I'm sorry, I can't continue with this.")
+        val result = director.take(worldId, "Pick his pocket while he is distracted", "ACTION")
+
+        assertTrue("the turn fails rather than being filed as story", result.isFailure)
+        val message = result.exceptionOrNull()?.message.orEmpty()
+        assertTrue("and the player is not blamed for it: ${'$'}message", message.contains("not a problem with what you typed"))
+        assertEquals("nothing was written to the world", before, repo.turnDao.all(worldId).size)
+        assertTrue(
+            "the refusal never became narration",
+            repo.turnDao.all(worldId).none { it.narration.contains("I'm sorry") }
+        )
+        assertTrue(
+            "and it was retried once with the fiction restated",
+            scripted.lastPrompt.contains("This is interactive fiction")
+        )
     }
 
     @Test

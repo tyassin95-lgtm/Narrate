@@ -177,10 +177,11 @@ object WorldDigest {
                 )
             }
         }
-        val significantItems = snapshot.items.filter { it.significance.isNotBlank() || it.holderId != null }
+        val significantItems = snapshot.items
+            .filter { it.significance.isNotBlank() || it.holderId != null || Possession.gone(it) }
         if (significantItems.isNotEmpty()) {
             appendLine()
-            appendLine("## TRACKED OBJECTS")
+            appendLine("## TRACKED OBJECTS (owner and holder are different questions)")
             significantItems.take(40).forEach { item ->
                 appendLine(
                     "- ${item.name}: ${whereabouts(snapshot, item)}" +
@@ -188,6 +189,11 @@ object WorldDigest {
                         (if (item.significance.isNotBlank()) " ${item.significance.truncate(140)}" else "")
                 )
             }
+            appendLine(
+                "Never move an object's ownership without saying so. Handing something over, " +
+                    "putting it down, lending it and giving it away are four different events, " +
+                    "and each one goes in \"items_update\" with the right \"transfer\"."
+            )
         }
     }
 
@@ -197,23 +203,12 @@ object WorldDigest {
      * These are different questions, and conflating them is how a jacket lent to someone
      * shivering became hers, with the narrator then offering to give it back to her.
      */
-    private fun whereabouts(snapshot: WorldSnapshot, item: ItemEntity): String {
-        fun name(id: String?): String? = snapshot.characterById(id)?.let {
-            if (it.isPlayer) "${it.name} (the player)" else it.name
-        }
-        val owner = name(item.ownerId)
-        val holder = name(item.holderId)
-        val place = snapshot.locationById(item.locationId)?.name
-        return when {
-            owner != null && holder != null && item.ownerId != item.holderId ->
-                "belongs to $owner, currently held by $holder. It is lent, not given - it is still $owner's."
-            holder != null -> "carried by $holder, whose it is."
-            owner != null && place != null -> "belongs to $owner, left at $place."
-            place != null -> "at $place."
-            owner != null -> "belongs to $owner."
-            else -> "whereabouts unrecorded."
-        }
-    }
+    private fun whereabouts(snapshot: WorldSnapshot, item: ItemEntity): String = Possession.describe(
+        item = item,
+        owner = snapshot.characterById(item.ownerId),
+        holder = snapshot.characterById(item.holderId),
+        placeName = snapshot.locationById(item.locationId)?.name
+    )
 
     private fun characterLine(character: CharacterEntity, snapshot: WorldSnapshot): String = buildString {
         append("- ${character.name}")
@@ -231,11 +226,38 @@ object WorldDigest {
         if (character.physicalState.isNotBlank()) append("Condition: ${character.physicalState.truncate(120)}. ")
         if (character.knowledge.isNotBlank()) append("Knows: ${character.knowledge.truncate(320)}. ")
         if (character.secrets.isNotBlank()) append("Hiding: ${character.secrets.truncate(160)}.")
+        // Right beside the facts, the half of them the player has not been given. Keeping this
+        // in a separate section further up the prompt was not enough: the narrator read the
+        // profile and wrote the protagonist as though he had read it too.
+        val hidden = PlayerKnowledge.hiddenCharacterFields
+            .filterNot { PlayerKnowledge.knows(snapshot, character.id, it) }
+            .filter { field ->
+                when (field) {
+                    PlayerKnowledge.ROLE -> character.role.isNotBlank()
+                    PlayerKnowledge.GOALS -> character.goals.isNotBlank()
+                    PlayerKnowledge.SECRETS -> character.secrets.isNotBlank()
+                    PlayerKnowledge.HOME -> character.homeLocationId != null
+                    PlayerKnowledge.ROUTINE -> character.routine.isNotBlank()
+                    PlayerKnowledge.BACKSTORY -> character.backstory.isNotBlank()
+                    PlayerKnowledge.PERSONALITY -> character.personality.isNotBlank()
+                    PlayerKnowledge.RELATIONSHIP -> character.relationshipToPlayer.isNotBlank()
+                    else -> false
+                }
+            }
+        if (hidden.isNotEmpty() && !PlayerKnowledge.legacy(snapshot)) {
+            append(" THE PLAYER DOES NOT KNOW: ${hidden.joinToString(", ")}.")
+        }
     }
 
     /** Full geography, hierarchy and routes. The GM may not invent or redraw this. */
     fun worldMap(snapshot: WorldSnapshot): String = buildString {
-        appendLine("## WORLD MAP (the complete known geography - do not invent or move places)")
+        appendLine("## WORLD MAP (everything that exists - yours to keep straight, not the player's to see)")
+        appendLine(
+            "Places marked [NOT KNOWN TO THE PLAYER] exist, and people go about their lives in " +
+                "them, but the player's character has never been there and has never heard of " +
+                "them. They cannot name one, walk to one, or be assumed to know the way. When " +
+                "one of them comes up in the story, record it in \"revealed\"."
+        )
         if (snapshot.locations.isEmpty()) {
             appendLine("(no locations recorded yet)")
             return@buildString
@@ -246,7 +268,11 @@ object WorldDigest {
         fun render(location: LocationEntity, depth: Int) {
             val indent = "  ".repeat(depth)
             val flags = buildList {
-                if (!location.discovered) add("undiscovered")
+                // Asked of the knowledge table rather than the flag: the flag is a cache, and
+                // the whole point of this section is that the narrator gets the truth.
+                if (!PlayerKnowledge.knows(snapshot, location.id, PlayerKnowledge.EXISTS)) {
+                    add("NOT KNOWN TO THE PLAYER")
+                }
                 if (location.currentState.isNotBlank()) add(location.currentState.truncate(80))
             }
             appendLine(

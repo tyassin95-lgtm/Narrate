@@ -210,7 +210,8 @@ class MigrationTest {
                 NarrateDatabase.MIGRATION_1_2,
                 NarrateDatabase.MIGRATION_2_3,
                 NarrateDatabase.MIGRATION_3_4,
-                NarrateDatabase.MIGRATION_4_5
+                NarrateDatabase.MIGRATION_4_5,
+                NarrateDatabase.MIGRATION_5_6
             )
             .build()
 
@@ -230,7 +231,7 @@ class MigrationTest {
         val raw = FrameworkSQLiteOpenHelperFactory().create(
             SupportSQLiteOpenHelper.Configuration.builder(context)
                 .name(REAL_DB)
-                .callback(object : SupportSQLiteOpenHelper.Callback(5) {
+                .callback(object : SupportSQLiteOpenHelper.Callback(6) {
                     override fun onCreate(db: SupportSQLiteDatabase) = Unit
                     override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
                 })
@@ -243,11 +244,16 @@ class MigrationTest {
                 .use { cursor -> generateSequence { if (cursor.moveToNext()) cursor.getString(0) else null }.toList() }
             val columns = db.query("PRAGMA table_info(items)").use { cursor ->
                 generateSequence { if (cursor.moveToNext()) cursor.getString(1) else null }.toList()
-            }.filter { it != "ownerId" }
+            }.filter { it != "ownerId" && it != "possession" && it != "history" }
             val kept = columns.joinToString(", ") { "`$it`" }
 
             db.execSQL("ALTER TABLE items RENAME TO items_upgraded")
-            db.execSQL(tableSql.replace(Regex(",\\s*`?ownerId`?[^,)]*"), ""))
+            // Everything the later versions added, taken back out, so what is left is what a
+            // version 3 save actually looked like.
+            val threeSql = listOf("ownerId", "possession", "history").fold(tableSql) { sql, column ->
+                sql.replace(Regex(",\\s*`?$column`?[^,)]*"), "")
+            }
+            db.execSQL(threeSql)
             db.execSQL("INSERT INTO items ($kept) SELECT $kept FROM items_upgraded")
             db.execSQL("DROP TABLE items_upgraded")
             indexSql.forEach { db.execSQL(it) }
@@ -267,6 +273,8 @@ class MigrationTest {
             db.execSQL("DROP TABLE characters_upgraded")
             characterIndexes.forEach { db.execSQL(it) }
 
+            // Version 3 had no knowledge table either.
+            db.execSQL("DROP TABLE IF EXISTS player_knowledge")
             db.execSQL("PRAGMA user_version = 3")
         }
 
@@ -282,8 +290,66 @@ class MigrationTest {
             "",
             upgraded.characterDao().player("w1")?.playerContact
         )
+        assertEquals(
+            "objects carry a possession state, defaulting to the ordinary one",
+            "HELD",
+            items.first().possession
+        )
         upgraded.close()
         context.deleteDatabase(REAL_DB)
+    }
+
+    /**
+     * A played world keeps the map it has already been shown.
+     *
+     * The knowledge system hides everywhere the player has not been. Applied retroactively to
+     * a save that has been on screen for thirty turns, that would delete a city the player
+     * has walked around - so the migration writes down what they have already seen.
+     */
+    @Test
+    fun `an existing save keeps the places and people it has already shown`() {
+        db.execSQL(
+            """
+            CREATE TABLE locations (
+                id TEXT NOT NULL PRIMARY KEY, worldId TEXT NOT NULL, name TEXT NOT NULL,
+                discovered INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE characters (
+                id TEXT NOT NULL PRIMARY KEY, worldId TEXT NOT NULL, name TEXT NOT NULL,
+                isPlayer INTEGER NOT NULL, lastSeenTurn INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE items (
+                id TEXT NOT NULL PRIMARY KEY, worldId TEXT NOT NULL, name TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("INSERT INTO locations VALUES ('l1', 'w1', 'Maple Street', 1)")
+        db.execSQL("INSERT INTO locations VALUES ('l2', 'w1', \"Nina's flat\", 0)")
+        db.execSQL("INSERT INTO characters VALUES ('pc', 'w1', 'Adrian', 1, 4)")
+        db.execSQL("INSERT INTO characters VALUES ('liv', 'w1', 'Liv', 0, 4)")
+        db.execSQL("INSERT INTO characters VALUES ('nina', 'w1', 'Nina', 0, 0)")
+
+        NarrateDatabase.MIGRATION_5_6.migrate(db)
+
+        val known = db.query(
+            "SELECT subjectType, subjectName FROM player_knowledge WHERE field = 'exists' ORDER BY subjectName"
+        ).use { cursor ->
+            generateSequence { if (cursor.moveToNext()) cursor.getString(0) + ":" + cursor.getString(1) else null }
+                .toList()
+        }
+        assertEquals(
+            "what the save had already shown, and nothing else",
+            listOf("CHARACTER:Liv", "LOCATION:Maple Street"),
+            known
+        )
     }
 
     private companion object {

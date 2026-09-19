@@ -188,7 +188,11 @@ class TranscriptExportTest {
         val markdown = export()
         assertTrue(markdown.contains("**Liv Mercer** (designer): Maple Street; affinity 12, trust 5; calls and texts"))
         assertTrue(markdown.contains("**Evan Hale** (her ex): Night Ward; affinity 0, trust 0; no way to contact them"))
-        assertTrue(markdown.contains("**wool jacket**: owned by Adrian Voss; held by Liv Mercer"))
+        assertTrue(
+            "owner and holder are both said, and which is which",
+            markdown.contains("**wool jacket**") &&
+                markdown.contains("owned by Adrian Voss (the player), LENT to Liv Mercer")
+        )
         assertTrue(markdown.contains("**Night Ward** (ROOM) - undiscovered"))
     }
 

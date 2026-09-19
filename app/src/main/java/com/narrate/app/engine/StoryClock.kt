@@ -72,6 +72,36 @@ object StoryClock {
         return if (match.groupValues[2].startsWith("hour", true)) count * 60 else count
     }
 
+    /**
+     * The same clock, moved forward, written the way the world already writes it.
+     *
+     * Used when the player presses a time control and the narrator moves the clock by four
+     * minutes anyway. The button is a promise that time passes; the app keeps it rather than
+     * asking again.
+     */
+    fun advance(storyTime: String, minutes: Int): String {
+        val reading = read(storyTime) ?: return storyTime
+        val total = reading.minutes + minutes
+        val day = reading.day + total / DAY_MINUTES
+        val within = ((total % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES
+        val twentyFour = storyTime.contains(Regex("\\d{1,2}[:.]\\d{2}\\s*(?!am|pm)", RegexOption.IGNORE_CASE)) &&
+            !storyTime.contains(Regex("(am|pm)", RegexOption.IGNORE_CASE))
+        val hour = within / 60
+        val minute = within % 60
+        val clock = if (twentyFour) {
+            String.format("%02d:%02d", hour, minute)
+        } else {
+            val suffix = if (hour < 12) "AM" else "PM"
+            val display = when {
+                hour == 0 -> 12
+                hour > 12 -> hour - 12
+                else -> hour
+            }
+            String.format("%d:%02d %s", display, minute, suffix)
+        }
+        return "Day $day, $clock"
+    }
+
     /** Hours when it is dark wherever you stand, and hours when it plainly is not. */
     fun definitelyDark(minutes: Int): Boolean = minutes in 0 until 4 * 60
     fun definitelyLight(minutes: Int): Boolean = minutes in 10 * 60 until 15 * 60

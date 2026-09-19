@@ -33,6 +33,7 @@ class WorldRepository(context: Context) {
     val visualDao = db.visualIdentityDao()
     val issueDao = db.continuityIssueDao()
     val usageDao = db.usageDao()
+    val knowledgeDao = db.knowledgeDao()
 
     fun observeWorlds(): Flow<List<WorldEntity>> = worldDao.observeAll()
     fun observeWorld(id: String): Flow<WorldEntity?> = worldDao.observe(id)
@@ -56,6 +57,7 @@ class WorldRepository(context: Context) {
     fun observeVisualForSubject(subjectId: String): Flow<VisualIdentityEntity?> = visualDao.observeForSubject(subjectId)
     fun observeUsage(worldId: String): Flow<List<UsageEntity>> = usageDao.observeForWorld(worldId)
     fun observeAllUsage(): Flow<List<UsageEntity>> = usageDao.observeAll()
+    fun observeKnowledge(worldId: String): Flow<List<KnowledgeEntity>> = knowledgeDao.observeAll(worldId)
 
     suspend fun world(id: String): WorldEntity? = worldDao.get(id)
     suspend fun mostRecentWorld(): WorldEntity? = worldDao.mostRecent()
@@ -88,7 +90,8 @@ class WorldRepository(context: Context) {
             recentTurns = recent,
             earlierTurns = between,
             memories = memoryDao.all(worldId),
-            visualIdentities = visualDao.all(worldId)
+            visualIdentities = visualDao.all(worldId),
+            knowledge = knowledgeDao.all(worldId)
         )
     }
 
@@ -106,6 +109,7 @@ class WorldRepository(context: Context) {
         factionDao.deleteByWorld(worldId)
         relationshipDao.deleteByWorld(worldId)
         memoryDao.deleteByWorld(worldId)
+        knowledgeDao.deleteByWorld(worldId)
         turnDao.deleteByWorld(worldId)
         threadDao.deleteByWorld(worldId)
         chapterDao.deleteByWorld(worldId)
@@ -130,6 +134,10 @@ class WorldRepository(context: Context) {
     suspend fun saveFactions(factions: List<FactionEntity>) = factionDao.upsertAll(factions)
     suspend fun saveRelationships(relationships: List<RelationshipEntity>) = relationshipDao.upsertAll(relationships)
     suspend fun saveThreads(threads: List<ThreadEntity>) = threadDao.upsertAll(threads)
+    suspend fun saveKnowledge(rows: List<KnowledgeEntity>) {
+        if (rows.isNotEmpty()) knowledgeDao.upsertAll(rows)
+    }
+
     suspend fun saveMemories(memories: List<MemoryEntity>) = memoryDao.insertAll(memories)
     suspend fun saveTurn(turn: TurnEntity) = turnDao.upsert(turn)
     suspend fun saveChapter(chapter: ChapterEntity) = chapterDao.upsert(chapter)
@@ -211,6 +219,9 @@ class WorldRepository(context: Context) {
     suspend fun rewindTo(worldId: String, fromIndex: Int) {
         turnDao.deleteFrom(worldId, fromIndex)
         memoryDao.deleteFrom(worldId, fromIndex)
+        // Rewinding un-learns what those turns taught the player, or the codex would
+        // keep a secret the story has not told yet.
+        knowledgeDao.deleteFrom(worldId, fromIndex)
         issueDao.deleteFrom(worldId, fromIndex)
         val world = worldDao.get(worldId) ?: return
         worldDao.upsert(world.copy(turnCount = fromIndex, updatedAt = System.currentTimeMillis()))

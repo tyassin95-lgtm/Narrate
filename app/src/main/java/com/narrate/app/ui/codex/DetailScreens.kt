@@ -27,7 +27,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.narrate.app.data.entity.ImageEntity
 import com.narrate.app.ui.components.*
+import com.narrate.app.data.entity.CharacterEntity
 import com.narrate.app.engine.ContactChannels
+import com.narrate.app.engine.PlayerKnowledge
 import com.narrate.app.ui.theme.NarrateColors
 import java.io.File
 
@@ -40,7 +42,11 @@ fun CharacterDetailScreen(
     onBack: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val character = state.characters.firstOrNull { it.id == characterId }
+    // Everything the player has not learned about this person is stripped out here, once, so
+    // no row further down has to remember to check. The world still holds all of it; this
+    // screen is the player's notebook, and a notebook only has what you have written in it.
+    val known = state.characters.firstOrNull { it.id == characterId }
+    val character = known?.let { state.asKnown(it) }
     val images = state.imagesFor(characterId)
     var renaming by remember { mutableStateOf(false) }
 
@@ -141,6 +147,26 @@ fun CharacterDetailScreen(
             InfoRow("Faction", character.faction)
             InfoRow("Routine", character.routine)
             InfoRow("Knows", character.knowledge)
+
+            // And, plainly, what is still to find out. An empty field reads as "this person
+            // has no goals"; saying it outright reads as a thread to pull.
+            if (!character.isPlayer && state.tracksKnowledge) {
+                val unknown = PlayerKnowledge.hiddenCharacterFields.filterNot { field ->
+                    state.provenance(character.id, field) != null
+                }.filter { field -> knownFieldPresent(known, field) }
+                if (unknown.isNotEmpty()) {
+                    InfoRow(
+                        "Still to find out",
+                        unknown.joinToString(", ") { readable(it) } +
+                            ". Nothing here is known until something in the story tells you."
+                    )
+                }
+                val how = PlayerKnowledge.hiddenCharacterFields.mapNotNull { field ->
+                    state.provenance(character.id, field)?.takeIf { it.sourceDetail.isNotBlank() }
+                        ?.let { "${readable(field)}: ${it.source.lowercase()} (${it.sourceDetail})" }
+                }
+                if (how.isNotEmpty()) InfoRow("How you know", how.joinToString("\n"))
+            }
 
             val memories = viewModel.memoriesFor(character, state.memories)
             if (memories.isNotEmpty()) {
@@ -349,4 +375,35 @@ private fun ImageStrip(images: List<ImageEntity>, onImage: (String) -> Unit) {
             }
         }
     }
+}
+
+/** Whether the world actually has anything under this field, so "still to find out" is honest. */
+private fun knownFieldPresent(character: CharacterEntity, field: String): Boolean = when (field) {
+    PlayerKnowledge.ROLE -> character.role.isNotBlank()
+    PlayerKnowledge.SUMMARY -> character.summary.isNotBlank()
+    PlayerKnowledge.PERSONALITY -> character.personality.isNotBlank()
+    PlayerKnowledge.BACKSTORY -> character.backstory.isNotBlank()
+    PlayerKnowledge.GOALS -> character.goals.isNotBlank()
+    PlayerKnowledge.FEARS -> character.fears.isNotBlank()
+    PlayerKnowledge.SECRETS -> character.secrets.isNotBlank()
+    PlayerKnowledge.HOME -> character.homeLocationId != null
+    PlayerKnowledge.ROUTINE -> character.routine.isNotBlank()
+    PlayerKnowledge.FACTION_FIELD -> character.faction.isNotBlank()
+    PlayerKnowledge.RELATIONSHIP -> character.relationshipToPlayer.isNotBlank()
+    else -> false
+}
+
+private fun readable(field: String): String = when (field) {
+    PlayerKnowledge.ROLE -> "what they do"
+    PlayerKnowledge.SUMMARY -> "who they are"
+    PlayerKnowledge.PERSONALITY -> "what they are like"
+    PlayerKnowledge.BACKSTORY -> "their history"
+    PlayerKnowledge.GOALS -> "what they want"
+    PlayerKnowledge.FEARS -> "what frightens them"
+    PlayerKnowledge.SECRETS -> "what they are hiding"
+    PlayerKnowledge.HOME -> "where they live"
+    PlayerKnowledge.ROUTINE -> "their routine"
+    PlayerKnowledge.FACTION_FIELD -> "who they answer to"
+    PlayerKnowledge.RELATIONSHIP -> "how they feel about you"
+    else -> field
 }

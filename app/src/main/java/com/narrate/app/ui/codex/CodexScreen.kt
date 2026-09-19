@@ -28,6 +28,7 @@ import com.narrate.app.engine.UsageRecorder
 import com.narrate.app.ui.settings.UsageBreakdown
 import com.narrate.app.ui.settings.UsageTotals
 import com.narrate.app.ui.components.*
+import com.narrate.app.engine.Possession
 import com.narrate.app.ui.theme.NarrateColors
 
 private enum class CodexTab(val label: String) {
@@ -112,7 +113,7 @@ private fun OverviewTab(state: CodexUiState, viewModel: CodexViewModel, onCharac
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatChip("Turns", world.turnCount.toString())
                 StatChip("Day", world.dayNumber.toString())
-                StatChip("Cast", state.npcs.size.toString())
+                StatChip("Cast", state.knownNpcs.size.toString())
                 StatChip("Places", state.discoveredLocations.size.toString())
             }
         }
@@ -235,7 +236,13 @@ private fun standingLabel(value: Int): String = when {
 @Composable
 private fun CastTab(state: CodexUiState, onCharacter: (String) -> Unit) {
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(state.npcs.sortedWith(compareByDescending<CharacterEntity> { it.importance }.thenBy { it.name })) { character ->
+        // The cast is who the player has met, not who the world generated. Until this, meeting
+        // one person put the entire population of the city in their address book.
+        items(
+            state.knownNpcs
+                .map { state.asKnown(it) }
+                .sortedWith(compareByDescending<CharacterEntity> { it.importance }.thenBy { it.name })
+        ) { character ->
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -273,7 +280,7 @@ private fun CastTab(state: CodexUiState, onCharacter: (String) -> Unit) {
                 AffinityBadge(character.affinity)
             }
         }
-        if (state.npcs.isEmpty()) {
+        if (state.knownNpcs.isEmpty()) {
             item { EmptyState("No one yet", "The cast fills in as you meet people.") }
         }
     }
@@ -317,7 +324,8 @@ private fun MapTab(state: CodexUiState, onLocation: (String) -> Unit) {
         item {
             MapHeader(drawn) { drawn = it }
             Text(
-                "Every place the world has recorded, with who is standing in it right now.",
+                "Everywhere you know about, and who you last saw there. The world is larger " +
+                    "than this - you have simply not been there yet.",
                 style = MaterialTheme.typography.bodySmall,
                 color = NarrateColors.TextMuted
             )
@@ -448,9 +456,24 @@ private fun ObjectsTab(state: CodexUiState, viewModel: CodexViewModel) {
                 Thumbnail(item.name, state.imagePath(item.imageId), size = 56.dp)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(item.name, style = MaterialTheme.typography.titleMedium, color = NarrateColors.TextPrimary)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            item.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = NarrateColors.TextPrimary
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Pill(Possession.label(item, state.player?.id))
+                    }
+                    // Owner and holder are separate facts, and the screen says both: a jacket
+                    // round somebody else's shoulders is still yours to ask for.
                     Text(
-                        "With " + (holder?.let { if (it.isPlayer) "you" else it.name } ?: state.locationName(item.locationId)),
+                        Possession.describe(
+                            item = item,
+                            owner = state.characters.firstOrNull { it.id == item.ownerId },
+                            holder = holder,
+                            placeName = item.locationId?.let { state.locationName(it) }
+                        ).replaceFirstChar { it.uppercase() },
                         style = MaterialTheme.typography.bodySmall,
                         color = NarrateColors.TextMuted
                     )

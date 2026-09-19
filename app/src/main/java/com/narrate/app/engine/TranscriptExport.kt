@@ -43,6 +43,7 @@ object TranscriptExport {
         val locations = repo.locationDao.all(worldId)
         val items = repo.itemDao.all(worldId)
         val threads = repo.threadDao.all(worldId)
+        val knowledge = repo.knowledgeDao.all(worldId)
         val memories = repo.memoryDao.all(worldId).groupBy { it.turnIndex }
         val chapters = repo.chapterDao.all(worldId).sortedBy { it.fromTurn }
 
@@ -161,19 +162,45 @@ object TranscriptExport {
                 appendLine("### Objects")
                 appendLine()
                 items.forEach { item ->
-                    val owner = characters.firstOrNull { it.id == item.ownerId }?.name
-                    val holder = characters.firstOrNull { it.id == item.holderId }?.name
                     appendLine(
-                        "- **${item.name}**: " +
-                            listOfNotNull(
-                                owner?.let { "owned by $it" },
-                                holder?.let { "held by $it" },
-                                item.locationId?.let { "at ${place(it)}" },
-                                item.state.takeIf { it.isNotBlank() }
-                            ).joinToString("; ").ifBlank { "unplaced" }
+                        "- **${item.name}** [${item.possession.lowercase()}]: " +
+                            Possession.describe(
+                                item = item,
+                                owner = characters.firstOrNull { it.id == item.ownerId },
+                                holder = characters.firstOrNull { it.id == item.holderId },
+                                placeName = item.locationId?.let { place(it) }
+                            ) + item.state.takeIf { it.isNotBlank() }?.let { " State: $it." }.orEmpty()
                     )
                 }
                 appendLine()
+            }
+            // The whole point of the redesign, so the whole point of the diagnostic: what the
+            // world holds against what the player has actually been given.
+            if (knowledge.isNotEmpty()) {
+                appendLine("### What the player's character knows")
+                appendLine()
+                knowledge.groupBy { it.subjectName.ifBlank { it.subjectId } }
+                    .toSortedMap()
+                    .forEach { (subject, rows) ->
+                        appendLine(
+                            "- **$subject**: " + rows.sortedBy { it.turnIndex }.joinToString("; ") {
+                                "${it.field} (${it.source.lowercase()}" +
+                                    it.sourceDetail.takeIf { detail -> detail.isNotBlank() }
+                                        ?.let { detail -> ", $detail" }.orEmpty() +
+                                    ", turn ${it.turnIndex})"
+                            }
+                        )
+                    }
+                appendLine()
+                val hidden = characters.filter { character ->
+                    !character.isPlayer && knowledge.none {
+                        it.subjectId == character.id && it.field == PlayerKnowledge.EXISTS
+                    }
+                }
+                if (hidden.isNotEmpty()) {
+                    appendLine("Never met: " + hidden.joinToString(", ") { it.name } + ".")
+                    appendLine()
+                }
             }
             if (threads.isNotEmpty()) {
                 appendLine("### Threads")

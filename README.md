@@ -12,6 +12,33 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
 
 ## What it does
 
+- **You know what your character knows.** The world is generated whole - every street, every
+  person's history, every secret - because the simulation needs all of it. None of it is
+  yours. A new world opens with your own street on the map and nobody in the cast but the
+  person standing in front of you. Meeting someone tells you what they look like, what they
+  are wearing and what they say; their job, their plans, where they live and what they are
+  hiding arrive only when something in the story hands them over, and the codex records which
+  and how. The map, the cast, the suggested actions and the narrator's own instructions all
+  read from that one record, so nothing leaks just because it exists in a column.
+- **A map, not a corkboard.** Places sit where they were found - beside what they hang off,
+  in the direction the story said, as far away as the travel time implies - and what is inside
+  what is drawn by enclosing it, not by a line pointing at it. No crossing wires, and nowhere
+  on it you have not been or heard of.
+- **Time is a button.** Skip time, go home and sleep are controls, not suggestions. They take
+  a turn, move the clock by hours rather than minutes whatever the narrator does, let every
+  routine in the world run while they pass, and open on the next thing worth reading. Nobody
+  has to choose "wait a little longer" off a menu again.
+- **Suggestions are decisions.** Drinking, ordering, sitting down, looking around, checking
+  the time and turning a page are prose, and they are refused outright. What is left is meant
+  to be something you want to do: a question with a cost, a risk, a move, a door.
+- **It is your sandbox.** The world plays out what you type - reckless, cruel, dishonest,
+  explicit, illegal, whatever a person in that situation might actually do - and answers with
+  consequences rather than refusals. If the model you chose declines, the app says so plainly,
+  keeps it out of your story, and never blames what you typed.
+- **Yours, lent, borrowed, dropped, lost.** An object's owner and its holder are different
+  facts, and so is how it got there. A coat round somebody else's shoulders is still yours to
+  ask for; a coat you gave away is not. That holds for every object, everywhere it is read:
+  narration, inventory, suggestions and the next turn.
 - **A world that remembers.** Every fact, event, promise, relationship, injury, object and
   place is written to a save file the moment it happens, and handed back to the model as
   authoritative state on every turn. The model is never asked to remember anything.
@@ -268,7 +295,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 365 tests covering parsing, continuity, canon, imagery, cost and persistence
+./gradlew testDebugUnitTest         # 399 tests covering parsing, continuity, knowledge, canon, imagery, cost and persistence
 ```
 
 Keep the keystore. Android identifies an app by its signing key, so a release built with a
@@ -335,7 +362,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 365 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 399 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
@@ -428,3 +455,29 @@ is no longer also lying on the table, an offer to be texted by somebody whose nu
 has is flagged, a name behind a preposition is not the one doing the verb after it, background
 the world builder invented is remembered without being pinned over what the player wrote, and
 a new place is drawn beside what it belongs to instead of in the next free cell of a grid.
+
+After several more playthroughs the verdict was not that the world was inconsistent - it was
+that the game was not fun, and the reason turned out to be architectural rather than a matter
+of prose. So the last set of tests is about the interaction model.
+
+The largest is the knowledge layer. There are three things that can know something now - the
+world, the narrator and the player's character - and the tests hold them apart: meeting someone
+gives you their face, their clothes and their voice and nothing else; what they tell you is
+recorded with who told you and when; somebody you have never met is not in your cast, and
+somewhere you have never been is not on your map. A suggested action that names either is
+refused, because a secret arriving through a menu is the least interesting door it could come
+through - unless the turn being read has just walked that person into the room, which is
+checked too. Rewinding un-learns what those turns taught. A save from before any of this keeps
+the map it has already shown, and a migration test proves it.
+
+The rest follow from the same complaint. Time controls are tested to move the clock by hours
+even when the narrator moves it by minutes, and to tell the narrator to put the wait behind us
+rather than describe it. The filler list is tested from both sides: thirteen kinds of
+housekeeping are refused, and six real moves - including "wait until he leaves, then go through
+the desk", which opens with a housekeeping verb and is not housekeeping - are left alone.
+Possession is tested as eight distinct facts rather than two columns, with lending as the safe
+reading when nothing is declared. A model refusing the player's turn is tested to be recognised,
+retried once with the fiction restated, kept out of the save, and reported without blaming what
+the player typed - while a character saying "I can't help you with that" is left alone as the
+scene it is. And the drawn map is tested for the thing a picture has to be: twelve places
+recorded within two hundredths of each other still come out as twelve readable pins.

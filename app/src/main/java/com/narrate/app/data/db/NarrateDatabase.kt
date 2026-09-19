@@ -25,10 +25,11 @@ import com.narrate.app.data.entity.*
         ImageEntity::class,
         VisualIdentityEntity::class,
         ContinuityIssueEntity::class,
-        UsageEntity::class
+        UsageEntity::class,
+        KnowledgeEntity::class
     ],
-    version = 5,
-    // The schema is written to app/schemas on every build. Version 5 will need a migration,
+    version = 6,
+    // The schema is written to app/schemas on every build. Every version needs a migration,
     // and a migration is only as good as the record of what it is migrating from.
     exportSchema = true
 )
@@ -48,6 +49,7 @@ abstract class NarrateDatabase : RoomDatabase() {
     abstract fun visualIdentityDao(): VisualIdentityDao
     abstract fun continuityIssueDao(): ContinuityIssueDao
     abstract fun usageDao(): UsageDao
+    abstract fun knowledgeDao(): KnowledgeDao
 
     companion object {
         @Volatile private var instance: NarrateDatabase? = null
@@ -120,6 +122,58 @@ abstract class NarrateDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the player-knowledge table and real possession state for objects.
+         *
+         * Existing saves are treated generously rather than blanked: everything already on
+         * their map stays on their map, everyone they have met stays met. Starting a played
+         * world over with an empty knowledge table would hide places the player has walked
+         * through, which is a worse lie than the one this release is fixing.
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN possession TEXT NOT NULL DEFAULT 'HELD'")
+                db.execSQL("ALTER TABLE items ADD COLUMN history TEXT NOT NULL DEFAULT ''")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS player_knowledge (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        worldId TEXT NOT NULL,
+                        subjectType TEXT NOT NULL,
+                        subjectId TEXT NOT NULL,
+                        subjectName TEXT NOT NULL DEFAULT '',
+                        field TEXT NOT NULL,
+                        value TEXT NOT NULL DEFAULT '',
+                        source TEXT NOT NULL DEFAULT 'SEEN',
+                        sourceDetail TEXT NOT NULL DEFAULT '',
+                        turnIndex INTEGER NOT NULL DEFAULT 0,
+                        storyTime TEXT NOT NULL DEFAULT '',
+                        createdAt INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_player_knowledge_worldId ON player_knowledge(worldId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_player_knowledge_subjectId ON player_knowledge(subjectId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_player_knowledge_subjectType ON player_knowledge(subjectType)")
+
+                // A world that has already been played keeps what it has shown the player.
+                db.execSQL(
+                    """
+                    INSERT INTO player_knowledge (id, worldId, subjectType, subjectId, subjectName, field, value, source, sourceDetail, turnIndex, storyTime, createdAt)
+                    SELECT hex(randomblob(16)), worldId, 'LOCATION', id, name, 'exists', '', 'VISITED', 'already on the map before this version', 0, '', 0
+                    FROM locations WHERE discovered = 1
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO player_knowledge (id, worldId, subjectType, subjectId, subjectName, field, value, source, sourceDetail, turnIndex, storyTime, createdAt)
+                    SELECT hex(randomblob(16)), worldId, 'CHARACTER', id, name, 'exists', '', 'SEEN', 'already met before this version', 0, '', 0
+                    FROM characters WHERE isPlayer = 0 AND lastSeenTurn > 0
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun get(context: Context): NarrateDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
@@ -127,7 +181,7 @@ abstract class NarrateDatabase : RoomDatabase() {
                 "narrate.db"
             )
                 // A save is the player's world. Never destroy one on a routine upgrade.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
                 .also { instance = it }

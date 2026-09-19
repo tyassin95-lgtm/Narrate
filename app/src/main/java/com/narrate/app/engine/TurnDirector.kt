@@ -78,10 +78,42 @@ class TurnDirector(
         var parsed = TurnParser.parse(response.text)
         var repaired = false
 
+        // A model that answered the player instead of the world has not written a turn. Ask
+        // once more with the fiction restated, and if it still will not, say so honestly
+        // rather than filing its refusal in the player's story as though it had happened.
+        var declined = false
+        if (Refusal.looksLikeRefusal(parsed)) {
+            val second = runCatching {
+                provider.chat(
+                    LlmRequest(
+                        model = choice.model,
+                        system = system,
+                        messages = messages + ChatMessage.assistant(response.text) +
+                            ChatMessage.user(Refusal.reframe(input, kind)),
+                        maxTokens = tokenBudget(snapshot.world, config),
+                        temperature = config.temperature.toDouble()
+                    ),
+                    apiKey
+                )
+            }.getOrNull()
+            if (second != null) {
+                usage.recordChat(worldId, turnIndex, UsageRecorder.PURPOSE_REPAIR, second, 0)
+                val retry = TurnParser.parse(second.text)
+                if (Refusal.looksLikeRefusal(retry)) declined = true else parsed = retry
+            } else {
+                declined = true
+            }
+        }
+        if (declined) {
+            // The world is left exactly as it was: no turn, no state, no history. The player's
+            // input was never the problem and is not recorded as one.
+            throw ProviderException(choice.provider, Refusal.NOTICE)
+        }
+
         // Suggestions are held to the same standard as the prose: one that offers something the
         // player is not carrying, or hands back a coat that was never theirs, is a continuity
         // error the player would be invited to commit.
-        var verdict = ChoiceGuard.vet(snapshot, parsed.choices)
+        var verdict = ChoiceGuard.vet(snapshot, parsed.choices, parsed)
         parsed = parsed.copy(choices = verdict.kept)
 
         // A turn that arrived without choices or without a state block is not finished. Rather
@@ -101,23 +133,13 @@ class TurnDirector(
                 config = config
             )
             if (completion != null) {
-                val secondLook = ChoiceGuard.vet(snapshot, completion.choices)
+                val secondLook = ChoiceGuard.vet(snapshot, completion.choices, completion)
                 parsed = completion.copy(
                     choices = secondLook.kept.ifEmpty { parsed.choices }
                 )
                 verdict = Verdict(parsed.choices, verdict.rejected + secondLook.rejected)
                 repaired = true
             }
-        }
-
-        // Nine turns of waiting at a table ended only when the player thought of an exit
-        // themselves. If the scene has stalled and the narrator has not offered a way out of
-        // it, the app offers one - after the repair pass, so a completion cannot swallow it.
-        SceneMomentum.skipSuggestion(snapshot)?.let { skip ->
-            val alreadyOffered = parsed.choices.any {
-                it.label.contains("time pass", true) || it.label.contains("until", true)
-            }
-            if (!alreadyOffered) parsed = parsed.copy(choices = parsed.choices + skip)
         }
 
         if (verdict.rejected.isNotEmpty()) {
@@ -142,7 +164,39 @@ class TurnDirector(
         } else {
             parsed.delta
         }
-        val applied = applier.apply(snapshot, delta, turnIndex, parsed.narration)
+        var applied = applier.apply(snapshot, delta, turnIndex, parsed.narration)
+
+        // A time control is a promise that time passes. When the narrator moves the clock four
+        // minutes for a skipped hour or an entire night's sleep, the app moves it the rest of
+        // the way rather than asking the player to press the button again.
+        if (WorldActions.isWorldAction(kind)) {
+            val required = WorldActions.minimumMinutes(kind, snapshot)
+            val moved = StoryClock.elapsed(snapshot.world.storyTime, applied.world.storyTime)
+            if (required > 0 && (moved == null || moved < required)) {
+                val corrected = StoryClock.advance(snapshot.world.storyTime, required)
+                if (corrected != snapshot.world.storyTime) {
+                    val world = applied.world.copy(
+                        storyTime = corrected,
+                        dayNumber = Regex("day\\s+(\\d+)", RegexOption.IGNORE_CASE)
+                            .find(corrected)?.groupValues?.get(1)?.toIntOrNull() ?: applied.world.dayNumber
+                    )
+                    repo.saveWorld(world)
+                    applied = applied.copy(world = world)
+                    repo.saveIssues(
+                        ContinuityGuard.Report().apply {
+                            add(
+                                ContinuityGuard.SEVERITY_INFO,
+                                "clock",
+                                "The player skipped ahead, but the turn only moved the clock " +
+                                    "${moved ?: 0} minutes.",
+                                "Advanced to \"$corrected\". A time control moves time by " +
+                                    "hours, not minutes."
+                            )
+                        }.toEntities(worldId, turnIndex)
+                    )
+                }
+            }
+        }
 
         if (!parsed.stateParsed && parsed.narration.isNotBlank()) {
             repo.saveIssues(
@@ -432,6 +486,11 @@ class TurnDirector(
             }
         }
 
+        PlayerKnowledge.render(snapshot).takeIf { it.isNotBlank() }?.let {
+            appendLine()
+            append(it)
+        }
+
         SceneMomentum.render(snapshot).takeIf { it.isNotBlank() }?.let {
             appendLine()
             append(it)
@@ -455,6 +514,8 @@ class TurnDirector(
                 appendLine()
                 appendLine(Prompts.playerInputInstruction(input, kind))
             }
+        } else if (WorldActions.isWorldAction(kind)) {
+            appendLine(WorldActions.instruction(kind, snapshot))
         } else {
             appendLine(Prompts.playerInputInstruction(input, kind))
         }

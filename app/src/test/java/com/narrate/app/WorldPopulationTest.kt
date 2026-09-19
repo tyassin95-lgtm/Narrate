@@ -168,6 +168,54 @@ class WorldPopulationTest {
     }
 
     @Test
+    fun `a new world opens with a map of where the player is standing, not the city`() = runBlocking {
+        // The complaint, exactly: every NPC's home was on the map before the player's
+        // character had any idea those people existed, let alone where they slept.
+        val world = build(
+            listOf(
+                NewCharacter(name = "Liv Mercer", role = "designer", location = "Maple Street", importance = 4),
+                NewCharacter(
+                    name = "Mara Ellison", role = "attending", location = "The Night Ward",
+                    homeLocation = "Eastgate Rentals", importance = 4
+                )
+            )
+        )
+
+        val onMap = repo.locationDao.all(world.id).filter { it.discovered }.map { it.name }
+        assertEquals(
+            "only where the story opens, and what contains it",
+            listOf("Maple Street"),
+            onMap
+        )
+        assertTrue(
+            "the rest of the city still exists, so people have somewhere to be",
+            repo.locationDao.all(world.id).size >= 4
+        )
+
+        val cast = repo.knowledgeDao.all(world.id)
+            .filter { it.subjectType == "CHARACTER" && it.field == "exists" }
+            .map { it.subjectName }
+        assertEquals(
+            "and the only person they have met is the one in the opening scene",
+            listOf("Liv Mercer"),
+            cast
+        )
+        assertTrue(
+            "seeing her tells them what she looks like, and no more",
+            repo.knowledgeDao.all(world.id)
+                .filter { it.subjectName == "Liv Mercer" }
+                .map { it.field }
+                .containsAll(listOf("exists", "name", "appearance", "outfit"))
+        )
+        assertTrue(
+            "not her job, not her plans, not where she lives",
+            repo.knowledgeDao.all(world.id).none {
+                it.subjectName == "Liv Mercer" && it.field in listOf("role", "goals", "home", "secrets")
+            }
+        )
+    }
+
+    @Test
     fun `background the builder invented is remembered but never pinned`() = runBlocking {
         // A model rated its own invention a five, and "Eastgate formed in the 1980s from
         // university expansion" started outranking what the player had actually written.

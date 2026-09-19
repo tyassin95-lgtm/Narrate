@@ -29,6 +29,8 @@ data class CodexUiState(
     val issues: List<ContinuityIssueEntity> = emptyList(),
     val turns: List<TurnEntity> = emptyList(),
     val usage: List<UsageEntity> = emptyList(),
+    /** What the player's character has actually learned. The codex may show nothing else. */
+    val knowledge: List<KnowledgeEntity> = emptyList(),
     /** The entity currently being drawn, so its own row can show it is working. */
     val generatingSubjectId: String? = null,
     val message: String? = null
@@ -37,14 +39,47 @@ data class CodexUiState(
 
     fun isDrawing(subjectId: String): Boolean = generatingSubjectId == subjectId
 
+    private val legacy: Boolean
+        get() = com.narrate.app.engine.PlayerKnowledge.legacy(knowledge, world?.turnCount ?: 0)
+
     /**
-     * The places the player knows about.
+     * The places on the player's map.
      *
-     * A world is built with more geography than the player has seen - where each NPC sleeps,
-     * the cafe nobody has walked into yet - and those exist so people have somewhere to be.
-     * Showing them on the map would hand the player an address their character never learned.
+     * A world is built with far more geography than the player has seen - every NPC's home,
+     * the cafe nobody has walked into, the streets on the other side of town - and all of it
+     * exists so that people have somewhere to be while the player is elsewhere. None of it is
+     * theirs to see. This is the list their character could actually draw from memory.
      */
-    val discoveredLocations: List<LocationEntity> get() = locations.filter { it.discovered }
+    val discoveredLocations: List<LocationEntity>
+        get() = if (legacy) locations.filter { it.discovered } else {
+            val known = com.narrate.app.engine.PlayerKnowledge
+                .knownIds(knowledge, com.narrate.app.engine.PlayerKnowledge.LOCATION)
+            locations.filter { it.id in known }
+        }
+
+    /** The people the player has met or been told about - not the whole generated cast. */
+    val knownNpcs: List<CharacterEntity>
+        get() = if (legacy) npcs else {
+            val known = com.narrate.app.engine.PlayerKnowledge
+                .knownIds(knowledge, com.narrate.app.engine.PlayerKnowledge.CHARACTER)
+            npcs.filter { it.id in known }
+        }
+
+    /**
+     * One person, with everything the player has not learned about them removed.
+     *
+     * The codex used to print a stranger's secrets the moment they walked into a scene, which
+     * is the single fastest way to make a world stop being worth exploring.
+     */
+    fun asKnown(character: CharacterEntity): CharacterEntity =
+        com.narrate.app.engine.PlayerKnowledge.asKnown(knowledge, world?.turnCount ?: 0, character)
+
+    /** Where a piece of knowledge came from, so the codex can say how they know it. */
+    fun provenance(subjectId: String, field: String): KnowledgeEntity? =
+        knowledge.lastOrNull { it.subjectId == subjectId && it.field == field }
+
+    /** True when this world still keeps track of what the player knows. */
+    val tracksKnowledge: Boolean get() = !legacy
 
     /** Things that actually happened in the world and contradicted it. */
     val worldIssues: List<ContinuityIssueEntity>
@@ -91,8 +126,9 @@ class CodexViewModel(application: Application, private val worldId: String) : An
             repo.observeTurns(worldId),
             repo.observeUsage(worldId)
         ) { chapters, images, issues, turns, usage -> listOf(chapters, images, issues, turns, usage) },
+        repo.observeKnowledge(worldId),
         transient
-    ) { first, second, third, flags ->
+    ) { first, second, third, learned, flags ->
         @Suppress("UNCHECKED_CAST")
         CodexUiState(
             world = first[0] as WorldEntity?,
@@ -108,6 +144,7 @@ class CodexViewModel(application: Application, private val worldId: String) : An
             issues = third[2] as List<ContinuityIssueEntity>,
             turns = third[3] as List<TurnEntity>,
             usage = third[4] as List<UsageEntity>,
+            knowledge = learned,
             generatingSubjectId = flags.subjectId,
             message = flags.message
         )

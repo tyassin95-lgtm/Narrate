@@ -119,6 +119,13 @@ data class ItemUpdate(
     val owner: String? = null,
     @SerialName("held_by") val heldBy: String? = null,
     val location: String? = null,
+    /**
+     * What kind of change this is: lend, give, return, take, drop, store, lose, destroy.
+     *
+     * Owner and holder alone cannot tell lending from giving, and the difference decides
+     * whether the player can ask for their own coat back or is asking for a gift back.
+     */
+    val transfer: String? = null,
     val state: String? = null
 )
 
@@ -187,6 +194,27 @@ data class VisualUpdate(
     val permanent: Boolean = false
 )
 
+/**
+ * Something that crossed from the world's knowledge into the player character's this turn.
+ *
+ * This is how anything gets into the codex, the map or the player's own mouth. A field the
+ * narrator never reveals stays hidden however long the world has known it.
+ */
+@Serializable
+data class RevealDelta(
+    /** Who or what it is about: a character, a place, an object, a faction. */
+    val about: String = "",
+    @SerialName("subject_type") val subjectType: String = "CHARACTER",
+    /** Which part of them: role, goals, home, secrets, exists... */
+    val field: String = "",
+    /** What the player now knows, in the terms they learned it. */
+    val value: String = "",
+    /** How: she told them, they read it, they saw it, they worked it out. */
+    val how: String = "",
+    /** Who or what it came from. */
+    val from: String = ""
+)
+
 @Serializable
 data class StateDelta(
     @SerialName("story_time") val storyTime: String? = null,
@@ -207,6 +235,8 @@ data class StateDelta(
     @SerialName("visual_updates") val visualUpdates: List<VisualUpdate> = emptyList(),
     /** Contact details exchanged this turn, in either direction. */
     val contacts: List<ContactDelta> = emptyList(),
+    /** What the player's character learned this turn, and how. */
+    val revealed: List<RevealDelta> = emptyList(),
     @SerialName("image_suggestion") val imageSuggestion: String? = null,
     /** Some models put the choices in the state block instead. Accepted rather than lost. */
     val choices: List<String> = emptyList()

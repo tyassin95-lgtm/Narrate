@@ -125,26 +125,12 @@ object SceneMomentum {
                 "Whatever you choose, this turn ends somewhere different from where it began - a " +
                     "new person, a new place, a new piece of information, or a later hour."
             )
+            appendLine(
+                "The player has buttons for skipping ahead, going home and sleeping, so do not " +
+                    "offer waiting as a suggested action. Offer them things worth doing here, or " +
+                    "end the scene and open somewhere that has some."
+            )
         }
     }
 
-    /**
-     * An option that lets the player out of a stalled scene, in case the narrator offers none.
-     *
-     * Without it the only way out of nine turns of waiting is for the player to think of one,
-     * which is the app asking them to do its job.
-     */
-    fun skipSuggestion(snapshot: WorldSnapshot): Choice? {
-        if (!read(snapshot).stalled) return null
-        val waitingFor = snapshot.threads
-            .filter { it.status == "ACTIVE" }
-            .maxByOrNull { it.urgency }
-            ?.title
-            ?.takeIf { it.isNotBlank() }
-        val label = when {
-            waitingFor != null -> "Let the time pass until something happens with $waitingFor"
-            else -> "Let the time pass until something actually happens"
-        }
-        return Choice(id = "skip", label = label.take(120), detail = "move the story on", kind = "ACTION")
-    }
 }

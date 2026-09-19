@@ -23,8 +23,18 @@ object ChoiceGuard {
         fun problems(): List<String> = rejected.map { "\"${it.choice.label.take(90)}\" - ${it.reason}" }
     }
 
-    fun vet(snapshot: WorldSnapshot, choices: List<Choice>): Verdict {
+    /**
+     * [turn] is the reply these choices came with, when there is one.
+     *
+     * Suggestions are checked against the world as it was before the turn was applied, which
+     * is the right base for almost everything - but not for somebody the turn has just
+     * introduced. On the turn a stranger walks in, "ask her what she is doing here" is the
+     * obvious move and the snapshot has never heard of her, so the narration and the state
+     * block are read for whoever and wherever this turn has just put in front of the player.
+     */
+    fun vet(snapshot: WorldSnapshot, choices: List<Choice>, turn: ParsedTurn? = null): Verdict {
         val player = snapshot.player ?: return Verdict(choices, emptyList())
+        val introduced = introducedThisTurn(snapshot, turn)
         val kept = mutableListOf<Choice>()
         val rejected = mutableListOf<Rejection>()
 
@@ -66,7 +76,7 @@ object ChoiceGuard {
                     choice, "filler",
                     "there is already an option for doing nothing, and two of them is not a choice"
                 )
-                else -> firstProblem(snapshot, player, choice)
+                else -> firstProblem(snapshot, player, choice, introduced)
             }
             if (rejection == null) {
                 if (idle) idleKept++
@@ -78,17 +88,67 @@ object ChoiceGuard {
         return Verdict(kept, rejected)
     }
 
-    /** Ways of spending a turn without doing anything: fine once, dismal as a menu. */
+    /**
+     * Housekeeping the player should never have to spend a move on.
+     *
+     * The app has buttons for time now - skip, go home, sleep - and everything else on this
+     * list is something the prose should simply do. An option that reads "take a sip of your
+     * coffee" is not a small choice, it is the absence of one, and a menu of them told the
+     * player their situation had nothing in it. This is deliberately broad: the cost of losing
+     * a borderline option is one line of a menu, and the cost of keeping it is the turn.
+     */
     private val filler = Regex(
-        "^(?:check|glance at|look at)\\s+(?:the\\s+)?(?:time|clock|phone)|" +
-            "^(?:keep|continue|carry on)\\s+(?:watching|reading|waiting|sitting|standing)|" +
-            "^(?:say|do)\\s+nothing|^wait(?:\\s|$)|^(?:stay|remain|sit|stand|linger)\\b|" +
-            "\\bturn the page\\b|\\bread (?:a|another|the next) (?:page|paragraph|section)\\b|" +
-            "\\bwatch the (?:sidewalk|street|traffic|door|room)\\b|\\bagain in a few minutes\\b",
+        // Time, and ways of not spending it.
+        "^(?:check|checks|glance at|look at|consult)\\s+(?:the\\s+|your\\s+|his\\s+|her\\s+)?" +
+            "(?:time|clock|phone|watch)\\b|" +
+            "^(?:keep|continue|carry on|go on)\\s+(?:watching|reading|waiting|sitting|standing|listening)|" +
+            "^(?:say|do)\\s+nothing\\b|^wait(?:s|ing)?\\b|^(?:stay|remain|sit|stand|linger|pause|hover)\\b|" +
+            "^let (?:the )?(?:time|hours?|minutes?) pass\\b|^(?:head|go|walk) home\\b|" +
+            "^(?:go to|head to) (?:bed|sleep)\\b|^(?:sleep|nap|doze)\\b|" +
+            // Looking at nothing in particular.
+            "^(?:look|glance|gaze|stare|peer)\\s+(?:around|about|out|ahead|down|up|away|at the (?:room|street|sidewalk|window|ceiling|floor))\\b|" +
+            "^(?:take in|survey|observe|study)\\s+(?:the\\s+)?(?:room|surroundings|scene|street|place|bar|cafe)\\b|" +
+            "^(?:people[- ]watch|watch the (?:sidewalk|street|traffic|door|room|people|crowd))\\b|" +
+            // Eating, drinking and ordering, which are prose, not decisions.
+            "^(?:drink|sip|take a sip|have a sip|swallow|finish)\\b|" +
+            "^(?:order|buy|get)\\s+(?:a|an|another|some|yourself)?\\s*" +
+            "(?:coffee|tea|drink|beer|water|food|something to (?:eat|drink)|refill)\\b|" +
+            "^(?:eat|nibble|pick at|chew)\\b|" +
+            // Fidgeting.
+            "^(?:breathe|take a breath|sigh|shrug|nod|blink|shift|fidget|stretch|yawn|rub your)\\b|" +
+            "^(?:think|reflect|consider|mull|ponder|wonder)\\s+(?:about it|it over|on it|quietly)?\\s*$|" +
+            "^(?:adjust|straighten|smooth)\\s+(?:your|his|her|the)\\b|" +
+            // Anywhere in the label.
+            "\\bturn the page\\b|\\bread (?:a|another|the next) (?:page|paragraph|section|chapter)\\b|" +
+            "\\bagain in a few minutes\\b|\\bnurse (?:your|the) (?:drink|coffee|beer)\\b",
         RegexOption.IGNORE_CASE
     )
 
-    fun isFiller(label: String): Boolean = filler.containsMatchIn(label.trim())
+    /** Things that are housekeeping wherever in the line they appear. */
+    private val fillerAnywhere = Regex(
+        "\\bturn the page\\b|\\bread (?:a|another|the next) (?:page|paragraph|section|chapter)\\b|" +
+            "\\bagain in a few minutes\\b|\\bnurse (?:your|the) (?:drink|coffee|beer)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
+    /**
+     * True when the whole option is housekeeping.
+     *
+     * "Wait" is housekeeping. "Wait until he leaves, then go through the desk" is a plan, and
+     * the opening word is the least interesting thing about it - so the anchored patterns only
+     * condemn a line that is short and has nothing after the verb.
+     */
+    fun isFiller(label: String): Boolean {
+        val text = label.trim()
+        if (fillerAnywhere.containsMatchIn(text)) return true
+        val compound = text.contains(", then", true) || text.contains(" then ", true) ||
+            text.contains(" until ", true) || text.contains(" so that ", true) ||
+            text.contains(" while she", true) || text.contains(" while he", true) ||
+            text.contains(" and ask", true) || text.contains(" and tell", true)
+        val words = text.split(Regex("\\s+")).size
+        if (compound || words > 9) return false
+        return filler.containsMatchIn(text)
+    }
 
     /**
      * Two options that come to the same thing.
@@ -111,13 +171,74 @@ object ChoiceGuard {
         .replace(Regex("\\s+"), " ")
         .trim()
 
+    /**
+     * Who and what this turn has just put in front of the player.
+     *
+     * Two different questions, and conflating them would undo one guard to fix another: a name
+     * the turn mentions is a name the player now knows of, but only somebody the turn actually
+     * puts in the room is somebody they can speak to.
+     */
+    private data class Arrivals(
+        val named: Set<String> = emptySet(),
+        val here: Set<String> = emptySet(),
+        val prose: String = ""
+    ) {
+        fun knowsOf(name: String): Boolean {
+            val lower = name.trim().lowercase()
+            // Anybody the turn walked into the room is somebody the player has now met, so
+            // the two questions answer each other in this direction.
+            return lower.isNotEmpty() &&
+                (named.any { it == lower } || here.any { it == lower } || prose.contains(lower))
+        }
+
+        fun inTheRoom(name: String): Boolean {
+            val lower = name.trim().lowercase()
+            return lower.isNotEmpty() && here.any { it == lower }
+        }
+    }
+
+    private fun introducedThisTurn(snapshot: WorldSnapshot, turn: ParsedTurn?): Arrivals {
+        if (turn == null) return Arrivals()
+        fun clean(values: List<String>) = values.map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
+
+        val hereName = snapshot.currentLocation?.name?.trim()?.lowercase()
+        // Somebody created with no location is created in the scene; somebody moved to where
+        // the player is standing has walked in.
+        val arriving = turn.delta.charactersNew
+            .filter { it.location.isBlank() || it.location.trim().lowercase() == hereName }
+            .map { it.name } +
+            turn.delta.charactersUpdate
+                .filter { it.location?.trim()?.lowercase() == hereName }
+                .map { it.name }
+
+        return Arrivals(
+            named = clean(
+                turn.delta.charactersNew.map { it.name } +
+                    turn.delta.locationsNew.map { it.name } +
+                    turn.delta.revealed.map { it.about }
+            ),
+            here = clean(arriving),
+            prose = turn.narration.lowercase()
+        )
+    }
+
     private fun firstProblem(
         snapshot: WorldSnapshot,
         player: CharacterEntity,
-        choice: Choice
+        choice: Choice,
+        introduced: Arrivals
     ): Rejection? {
         val text = (choice.label + " " + choice.detail).lowercase()
         val npcs = snapshot.npcs
+
+        // An option the player's character has no way of having thought of.
+        //
+        // A suggestion is written by something that can see the whole world, and it kept
+        // offering the player a walk to a bar they had never heard of and a question about a
+        // sister nobody had mentioned. Tapping one of those does not just break continuity: it
+        // hands the player information through the menu, which is the least interesting door
+        // in the game for a secret to come through.
+        unknownToThePlayer(snapshot, text, introduced)?.let { return Rejection(choice, "unknown", it) }
 
         // The player is the one acting. An option cannot be addressed to them or spoken by
         // someone else - that is the narrator losing track of whose turn it is.
@@ -152,8 +273,16 @@ object ChoiceGuard {
         snapshot.items.forEach { item ->
             val mentioned = mentions(text, item.name) ?: return@forEach
 
-            val ownedByPlayer = item.ownerId == player.id
-            val heldByPlayer = item.holderId == player.id
+            val ownedByPlayer = Possession.ownedBy(item, player.id)
+            val heldByPlayer = Possession.heldBy(item, player.id)
+
+            // Something burned, broken or lost is not an option, whoever used to own it.
+            if (Possession.gone(item)) {
+                return Rejection(
+                    choice, "item-possession",
+                    "the ${item.name} is ${item.possession.lowercase()} - it is not there to be used"
+                )
+            }
 
             if (ownedByPlayer && thanksForOwnItem(text, mentioned)) {
                 return Rejection(
@@ -163,7 +292,7 @@ object ChoiceGuard {
                 )
             }
 
-            if (ownedByPlayer && !heldByPlayer && returnsToOther(text, mentioned, snapshot)) {
+            if (Possession.outOnLoan(item, player.id) && returnsToOther(text, mentioned, snapshot)) {
                 val holder = snapshot.characterById(item.holderId)?.name ?: "someone else"
                 return Rejection(
                     choice, "item-ownership",
@@ -189,6 +318,12 @@ object ChoiceGuard {
         // Talking to someone who is not here, without any means of reaching them.
         val here = snapshot.currentLocation?.id
         npcs.filter { it.currentLocationId != here && !snapshot.withinEarshot(it.currentLocationId) }.forEach { npc ->
+            // The snapshot is from before this turn was applied. Somebody the turn has just
+            // walked into the room is in the room, and refusing to let the player speak to
+            // them is the guard arguing with the scene it is reading.
+            if (introduced.inTheRoom(npc.name) || introduced.inTheRoom(npc.name.split(' ').first())) {
+                return@forEach
+            }
             firstName(npc.name)?.let { name ->
                 val talksTo = Regex("\\b(ask|tell|say to|talk to|answer|reply to|thank|greet)\\s+$name\\b")
                 val remotely = Regex("\\b(call|phone|ring|text|message|write|email|radio)\\b")
@@ -229,6 +364,41 @@ object ChoiceGuard {
             }
         }
 
+        return null
+    }
+
+    /**
+     * A person or a place named in an option that the player has never heard of.
+     *
+     * Only names are checked, and only whole words: the option may perfectly well be about a
+     * bar the player is standing outside without naming it, and that is the narrator's job to
+     * get right. What it may not do is put a name in the player's mouth that nothing has told
+     * them.
+     */
+    private fun unknownToThePlayer(
+        snapshot: WorldSnapshot,
+        text: String,
+        introduced: Arrivals
+    ): String? {
+        if (PlayerKnowledge.legacy(snapshot)) return null
+        fun justArrived(name: String) = introduced.knowsOf(name)
+
+        snapshot.npcs.forEach { npc ->
+            if (PlayerKnowledge.knows(snapshot, npc.id, PlayerKnowledge.EXISTS)) return@forEach
+            if (justArrived(npc.name) || justArrived(npc.name.split(' ').first())) return@forEach
+            val name = npc.name.split(' ').firstOrNull()?.takeIf { it.length >= 4 } ?: return@forEach
+            if (Regex("\\b${Regex.escape(name.lowercase())}\\b").containsMatchIn(text)) {
+                return "it names ${npc.name}, who the player has never met or heard of"
+            }
+        }
+        snapshot.locations.forEach { place ->
+            if (PlayerKnowledge.knows(snapshot, place.id, PlayerKnowledge.EXISTS)) return@forEach
+            if (justArrived(place.name)) return@forEach
+            val name = place.name.takeIf { it.length >= 5 } ?: return@forEach
+            if (Regex("\\b${Regex.escape(name.lowercase())}\\b").containsMatchIn(text)) {
+                return "it names ${place.name}, somewhere the player has never been and never heard of"
+            }
+        }
         return null
     }
 

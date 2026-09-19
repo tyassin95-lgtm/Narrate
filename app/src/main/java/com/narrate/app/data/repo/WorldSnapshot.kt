@@ -28,7 +28,14 @@ data class WorldSnapshot(
      */
     val earlierTurns: List<TurnEntity> = emptyList(),
     val memories: List<MemoryEntity>,
-    val visualIdentities: List<VisualIdentityEntity>
+    val visualIdentities: List<VisualIdentityEntity>,
+    /**
+     * Everything the player's character has actually learned.
+     *
+     * Empty on a world built before this existed, which is why [PlayerKnowledge] treats an
+     * empty table as "no knowledge system yet" rather than "the player knows nothing".
+     */
+    val knowledge: List<KnowledgeEntity> = emptyList()
 ) {
     val npcs: List<CharacterEntity> get() = characters.filter { !it.isPlayer }
 

@@ -91,7 +91,10 @@ class StateApplier(private val repo: WorldRepository) {
             val (x, y) = MapPlacement.place(
                 anchors = listOfNotNull(parent, beside, here),
                 existing = locations,
-                seed = locations.size
+                seed = locations.size,
+                // Whatever the turn said about getting there is the only survey this place
+                // will ever get: "two streets north", "across the road", "a bus ride out".
+                hint = MapPlacement.Hint(text = narration.takeLast(1200))
             )
             val created = LocationEntity(
                 id = newId(),
@@ -100,7 +103,9 @@ class StateApplier(private val repo: WorldRepository) {
                 type = PlaceIdentity.typeFromName(reference, "BUILDING"),
                 parentId = parent?.id?.takeIf { it != here?.id || namedWithin != null },
                 description = "First referenced $originHint.",
-                discovered = true,
+                // Whether the player knows about it is decided by what they saw and were
+                // told, not by the fact that the world now has a row for it.
+                discovered = false,
                 firstSeenTurn = turnIndex,
                 mapX = x,
                 mapY = y
@@ -137,8 +142,7 @@ class StateApplier(private val repo: WorldRepository) {
                 val merged = existing.copy(
                     description = incoming.description.ifBlank { existing.description },
                     atmosphere = incoming.atmosphere.ifBlank { existing.atmosphere },
-                    notableFeatures = incoming.notableFeatures.ifBlank { existing.notableFeatures },
-                    discovered = true
+                    notableFeatures = incoming.notableFeatures.ifBlank { existing.notableFeatures }
                 )
                 locations[locations.indexOfFirst { it.id == existing.id }] = merged
                 repo.saveLocation(merged)
@@ -158,7 +162,12 @@ class StateApplier(private val repo: WorldRepository) {
                 anchors = listOfNotNull(parent) + neighbours +
                     listOfNotNull(locations.firstOrNull { it.id == snapshot.currentLocation?.id }),
                 existing = locations,
-                seed = locations.size
+                seed = locations.size,
+                hint = MapPlacement.Hint(
+                    text = listOf(incoming.description, incoming.travelTime, narration.takeLast(800))
+                        .joinToString(" "),
+                    travelTime = incoming.travelTime
+                )
             )
             val created = LocationEntity(
                 id = newId(),
@@ -170,7 +179,7 @@ class StateApplier(private val repo: WorldRepository) {
                 atmosphere = incoming.atmosphere,
                 notableFeatures = incoming.notableFeatures,
                 controlledBy = incoming.controlledBy,
-                discovered = true,
+                discovered = false,
                 firstSeenTurn = turnIndex,
                 mapX = x,
                 mapY = y
@@ -220,7 +229,8 @@ class StateApplier(private val repo: WorldRepository) {
                     else (location.currentState + " " + change).truncate(600)
                 } ?: location.currentState,
                 controlledBy = update.controlledBy ?: location.controlledBy,
-                discovered = update.discovered ?: location.discovered
+                // Discovery is the player's, not the world's: see the knowledge pass.
+                discovered = location.discovered
             )
             locations[locations.indexOfFirst { it.id == location.id }] = merged
             repo.saveLocation(merged)
@@ -386,11 +396,20 @@ class StateApplier(private val repo: WorldRepository) {
                 playerDelta.itemsGained.filter { it.isNotBlank() }.forEach { name ->
                     val existing = repo.resolveItem(items, name)
                     if (existing != null) {
-                        val moved = existing.copy(
-                            holderId = updatedPlayer.id,
-                            ownerId = existing.ownerId ?: updatedPlayer.id,
-                            locationId = null
-                        )
+                        val moved = Possession.settle(
+                            item = existing,
+                            newHolder = updatedPlayer,
+                            newLocationId = null,
+                            transfer = if (existing.ownerId == null || existing.ownerId == updatedPlayer.id) {
+                                Possession.HELD
+                            } else {
+                                // Picking up something that is somebody else's is borrowing it,
+                                // whatever the player intends by it.
+                                Possession.BORROWED
+                            },
+                            declaredOwner = null,
+                            turnIndex = turnIndex
+                        ).copy(ownerId = existing.ownerId ?: updatedPlayer.id)
                         items[items.indexOfFirst { it.id == existing.id }] = moved
                         repo.saveItems(listOf(moved))
                     } else {
@@ -405,9 +424,13 @@ class StateApplier(private val repo: WorldRepository) {
                 }
                 playerDelta.itemsLost.filter { it.isNotBlank() }.forEach { name ->
                     val existing = repo.resolveItem(items, name) ?: return@forEach
-                    val dropped = existing.copy(
-                        holderId = null,
-                        locationId = updatedPlayer.currentLocationId
+                    val dropped = Possession.settle(
+                        item = existing,
+                        newHolder = null,
+                        newLocationId = updatedPlayer.currentLocationId,
+                        transfer = Possession.DROPPED,
+                        declaredOwner = null,
+                        turnIndex = turnIndex
                     )
                     items[items.indexOfFirst { it.id == existing.id }] = dropped
                     repo.saveItems(listOf(dropped))
@@ -429,6 +452,11 @@ class StateApplier(private val repo: WorldRepository) {
                 ownerId = findCharacter(incoming.owner)?.id ?: holder?.id,
                 holderId = holder?.id,
                 locationId = if (holder == null) place?.id ?: snapshot.currentLocation?.id else null,
+                possession = when {
+                    holder == null -> Possession.STORED
+                    findCharacter(incoming.owner)?.id.let { it != null && it != holder.id } -> Possession.LENT
+                    else -> Possession.HELD
+                },
                 firstSeenTurn = turnIndex
             )
             items += created
@@ -436,23 +464,26 @@ class StateApplier(private val repo: WorldRepository) {
         }
         delta.itemsUpdate.forEach { update ->
             val item = repo.resolveItem(items, update.name) ?: return@forEach
-            val holder = findCharacter(update.heldBy)
-            val place = findLocation(update.location)
-            val nowHeldBy = holder?.id ?: if (update.location != null) null else item.holderId
-            val merged = item.copy(
-                // Ownership only moves when the narrator says it has. Handing someone your
-                // jacket makes them the holder, never the owner.
-                ownerId = findCharacter(update.owner)?.id ?: item.ownerId ?: holder?.id,
-                holderId = nowHeldBy,
-                // Something somebody is carrying has no address of its own. A jacket recorded
-                // as held by Liv and also as lying on the pavement she picked it up from is a
-                // jacket in two places, and the digest will offer whichever it reads first.
-                locationId = if (nowHeldBy != null) null else (place?.id ?: item.locationId),
-                state = update.state ?: item.state,
-                updatedAt = System.currentTimeMillis()
-            )
+            // Owner, holder, place and the kind of move are settled together: they are one
+            // fact, and working them out separately is how a lent jacket became a gift.
+            val merged = Possession.settle(
+                item = item,
+                newHolder = findCharacter(update.heldBy),
+                newLocationId = findLocation(update.location)?.id,
+                transfer = update.transfer,
+                declaredOwner = findCharacter(update.owner),
+                turnIndex = turnIndex
+            ).copy(state = update.state ?: item.state)
             items[items.indexOfFirst { it.id == item.id }] = merged
             repo.saveItems(listOf(merged))
+            if (Possession.outOnLoan(merged, snapshot.player?.id)) {
+                report.add(
+                    ContinuityGuard.SEVERITY_INFO, "item-ownership",
+                    "${merged.name} is with ${findCharacter(update.heldBy)?.name ?: "somebody else"}, " +
+                        "on loan from the player.",
+                    "Recorded as lent, not given. It is still the player's, and they may ask for it back."
+                )
+            }
         }
 
         // 6. Factions.
@@ -654,12 +685,193 @@ class StateApplier(private val repo: WorldRepository) {
             repo.saveItems(fixed)
         }
 
+        // 13. What the player's character now knows, which is not the same as what happened.
+        //
+        // Everything above updates the world. This decides how much of it reaches the player:
+        // the map, the cast list, the codex and the next prompt all read from here, so a
+        // secret in a column stays a secret until something in the story hands it over.
+        learn(
+            snapshot = snapshot,
+            delta = delta,
+            narration = narration,
+            characters = characters,
+            locations = locations,
+            items = items,
+            world = world,
+            turnIndex = turnIndex,
+            report = report
+        )
+
         val here = world.currentLocationId
         val present = characters.filter { it.currentLocationId == here && it.status == "ALIVE" }.map { it.id }
         val hereName = locations.firstOrNull { it.id == here }?.name
             ?: snapshot.locationName(here).takeIf { it != "unknown" }
             ?: ""
         return ApplyResult(report, world, present, visualSubjects.distinct(), hereName)
+    }
+
+    /**
+     * Writes down what the turn taught the player, and only that.
+     *
+     * Three things are automatic, because they need no narrator to declare them: a person the
+     * player is in the room with can be seen and heard; a place they are standing in is a
+     * place they know; a place the narration names out loud is a place they have heard of.
+     * Everything else - a job, a home, a plan, a fear, a secret - arrives only through the
+     * "revealed" block, which is the narrator saying in as many words that it came up.
+     */
+    private suspend fun learn(
+        snapshot: WorldSnapshot,
+        delta: StateDelta,
+        narration: String,
+        characters: List<CharacterEntity>,
+        locations: MutableList<LocationEntity>,
+        items: List<ItemEntity>,
+        world: WorldEntity,
+        turnIndex: Int,
+        report: ContinuityGuard.Report
+    ) {
+        val worldId = world.id
+        val rows = mutableListOf<KnowledgeEntity>()
+        val alreadyKnown = mutableMapOf<String, MutableSet<String>>()
+        snapshot.knowledge.forEach {
+            alreadyKnown.getOrPut(it.subjectId) { mutableSetOf() } += it.field
+        }
+        fun known(id: String) = alreadyKnown.getOrPut(id) { mutableSetOf() }
+        fun add(row: KnowledgeEntity) {
+            if (row.field in known(row.subjectId)) return
+            known(row.subjectId) += row.field
+            rows += row
+        }
+
+        val storyTime = world.storyTime
+        val player = characters.firstOrNull { it.isPlayer }
+        val hereId = world.currentLocationId
+
+        // Anyone in the room, or near enough to be heard: seen and heard, nothing more.
+        val inScene = characters.filter {
+            !it.isPlayer && it.status != "DEAD" &&
+                (it.currentLocationId == hereId || snapshot.withinEarshot(it.currentLocationId))
+        }
+        inScene.forEach { npc ->
+            PlayerKnowledge.onMeeting(worldId, npc, turnIndex, storyTime, known(npc.id)).forEach(::add)
+        }
+
+        // Where they are standing, and everything that contains it: you can see the street
+        // you are on and the building you walked into.
+        generateSequence(locations.firstOrNull { it.id == hereId }) { child ->
+            child.parentId?.let { id -> locations.firstOrNull { it.id == id } }
+        }.take(6).forEach { place ->
+            PlayerKnowledge.onArriving(worldId, place, turnIndex, storyTime, known(place.id)).forEach(::add)
+        }
+
+        // A turn that says outright that a place has been discovered is saying the player
+        // found out about it.
+        delta.locationsUpdate.filter { it.discovered == true && it.name.isNotBlank() }.forEach { update ->
+            val place = repo.resolveLocation(locations, update.name) ?: return@forEach
+            PlayerKnowledge.onHearingOf(
+                worldId, place, "found this turn", turnIndex, storyTime, known(place.id)
+            ).forEach(::add)
+        }
+
+        // Somewhere the narration named out loud is somewhere they have now heard of, even
+        // if they have never set foot in it. That is how a city becomes known: by being
+        // talked about, one name at a time.
+        if (narration.isNotBlank()) {
+            val prose = narration.lowercase()
+            locations.filter { it.name.length >= 4 && PlayerKnowledge.EXISTS !in known(it.id) }
+                .filter { prose.contains(it.name.lowercase()) }
+                .take(6)
+                .forEach { place ->
+                    PlayerKnowledge.onHearingOf(
+                        worldId, place, "it came up in the scene", turnIndex, storyTime, known(place.id)
+                    ).forEach(::add)
+                }
+        }
+
+        // Anything the player is carrying, they plainly know about.
+        items.filter { it.holderId != null && it.holderId == player?.id }.forEach { item ->
+            add(
+                PlayerKnowledge.row(
+                    worldId, PlayerKnowledge.ITEM, item.id, item.name, PlayerKnowledge.EXISTS,
+                    source = PlayerKnowledge.SEEN, sourceDetail = "in their hands",
+                    turnIndex = turnIndex, storyTime = storyTime
+                )
+            )
+        }
+
+        // A number that changed hands is something they know they have.
+        delta.contacts.filter { it.established && it.character.isNotBlank() }.forEach { incoming ->
+            val npc = repo.resolveCharacter(characters, incoming.character) ?: return@forEach
+            add(
+                PlayerKnowledge.row(
+                    worldId, PlayerKnowledge.CHARACTER, npc.id, npc.name, PlayerKnowledge.CONTACT,
+                    value = ContactChannels.describe(ContactChannels.normalise(incoming.channel)),
+                    source = PlayerKnowledge.TOLD, sourceDetail = npc.name,
+                    turnIndex = turnIndex, storyTime = storyTime
+                )
+            )
+        }
+
+        // And whatever the narrator says came up.
+        delta.revealed.filter { it.about.isNotBlank() }.forEach { reveal ->
+            val field = PlayerKnowledge.normaliseField(reveal.field)
+            val source = PlayerKnowledge.normaliseSource(reveal.how)
+            val type = reveal.subjectType.trim().uppercase()
+            val subject: Pair<String, String>? = when {
+                type.startsWith("LOC") || type.startsWith("PLACE") ->
+                    repo.resolveLocation(locations, reveal.about)?.let { it.id to it.name }
+                        ?.also { pair ->
+                            // Hearing about a place puts it on the map, whatever else was said.
+                            locations.firstOrNull { it.id == pair.first }?.let { place ->
+                                PlayerKnowledge.onHearingOf(
+                                    worldId, place, reveal.from.ifBlank { "mentioned" },
+                                    turnIndex, storyTime, known(place.id)
+                                ).forEach(::add)
+                            }
+                        }
+                type.startsWith("ITEM") || type.startsWith("OBJ") ->
+                    repo.resolveItem(items, reveal.about)?.let { it.id to it.name }
+                else -> repo.resolveCharacter(characters, reveal.about)?.let { it.id to it.name }
+            }
+            if (subject == null) {
+                report.add(
+                    ContinuityGuard.SEVERITY_INFO, "knowledge",
+                    "The player was said to have learned something about \"${reveal.about}\", " +
+                        "who or which is not in the world.",
+                    "Not recorded. Create them in the same turn they are learned about."
+                )
+                return@forEach
+            }
+            add(
+                PlayerKnowledge.row(
+                    worldId,
+                    when {
+                        type.startsWith("LOC") || type.startsWith("PLACE") -> PlayerKnowledge.LOCATION
+                        type.startsWith("ITEM") || type.startsWith("OBJ") -> PlayerKnowledge.ITEM
+                        else -> PlayerKnowledge.CHARACTER
+                    },
+                    subject.first, subject.second, field,
+                    value = reveal.value,
+                    source = source,
+                    sourceDetail = reveal.from.ifBlank { reveal.how },
+                    turnIndex = turnIndex, storyTime = storyTime
+                )
+            )
+        }
+
+        if (rows.isNotEmpty()) repo.saveKnowledge(rows)
+
+        // The map flag is a cache of one question: does the player know this place exists?
+        val knownPlaces = (snapshot.knowledge + rows)
+            .filter { it.subjectType == PlayerKnowledge.LOCATION && it.field == PlayerKnowledge.EXISTS }
+            .map { it.subjectId }
+            .toSet()
+        val corrected = locations.filter { it.discovered != (it.id in knownPlaces) }
+            .map { it.copy(discovered = it.id in knownPlaces) }
+        if (corrected.isNotEmpty()) {
+            corrected.forEach { fixed -> locations[locations.indexOfFirst { it.id == fixed.id }] = fixed }
+            repo.saveLocations(corrected)
+        }
     }
 
     private fun linkJoins(link: LocationLinkEntity, a: String, b: String): Boolean =

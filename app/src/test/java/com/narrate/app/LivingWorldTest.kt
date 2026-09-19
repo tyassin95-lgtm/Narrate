@@ -174,18 +174,17 @@ class LivingWorldTest {
     }
 
     @Test
-    fun `the player is always offered a way out of a stalled scene`() {
+    fun `a stalled scene points at the controls instead of inventing another option`() {
         val stalled = snapshot(
             turns = (0..3).map { idleTurn(it, "Wait") },
-            threads = listOf(
-                ThreadEntity(worldId = "w", title = "Liv's gallery submission", urgency = 4),
-                ThreadEntity(worldId = "w", title = "The rent", urgency = 1)
-            )
+            threads = listOf(ThreadEntity(worldId = "w", title = "Liv's gallery submission", urgency = 4))
         )
-        val skip = SceneMomentum.skipSuggestion(stalled)
-        assertNotNull(skip)
-        assertTrue(skip!!.label.contains("Liv's gallery submission"))
-        assertNull("and it is not offered when the scene is going somewhere", SceneMomentum.skipSuggestion(snapshot()))
+        val rendered = SceneMomentum.render(stalled)
+        assertTrue(
+            "waiting is a button, so it is not a suggestion",
+            rendered.contains("do not offer waiting as a suggested action")
+        )
+        assertTrue(rendered.contains("skipping ahead, going home and sleeping"))
     }
 
     // --- Filler suggestions --------------------------------------------------------------
@@ -418,6 +417,6 @@ class LivingWorldTest {
         assertTrue("recurring people have to be distinguishable", prompt.contains("must not sound alike or move alike"))
         assertTrue("no countdown arithmetic", prompt.contains("Do not do arithmetic in the"))
         assertTrue(prompt.contains("has no sunlight in it"))
-        assertTrue("and no menus made of nothing", prompt.contains("they are the absence of one"))
+        assertTrue("and no menus made of nothing", prompt.contains("it is not a choice, it is a chore"))
     }
 }

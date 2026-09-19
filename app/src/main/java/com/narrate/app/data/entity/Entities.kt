@@ -170,6 +170,18 @@ data class ItemEntity(
     /** Who physically has it right now. */
     val holderId: String? = null,
     val locationId: String? = null,
+    /**
+     * What kind of possession this is, which owner and holder alone cannot express.
+     *
+     * HELD (with its owner), LENT (the owner let somebody else have it for now), BORROWED
+     * (the holder is not the owner and did not ask), STORED (put away somewhere on purpose),
+     * DROPPED (left where it fell), LOST (nobody knows where), DESTROYED (gone for good).
+     * A jacket lent to somebody shivering is LENT, and lending is not giving: "give it back"
+     * only makes sense in one direction, and the world has to know which.
+     */
+    val possession: String = "HELD",
+    /** Every hand it has passed through, one line per turn, newest last. */
+    val history: String = "",
     val state: String = "",
     val imageId: String? = null,
     val tags: String = "",
@@ -364,5 +376,48 @@ data class UsageEntity(
     val estimatedCost: Double = 0.0,
     /** False when the model has no price on record, so totals can say so honestly. */
     val costKnown: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+/**
+ * One thing the player's character actually knows, and how they came to know it.
+ *
+ * The world is generated all at once: every NPC arrives with a backstory, a home address, a
+ * secret and a routine, and every street in the city is on the map before the player has
+ * walked down any of them. That is how the world can be simulated - but handing all of it to
+ * the player on turn one is what made the game feel like reading a wiki about a place instead
+ * of being in it.
+ *
+ * So there are two layers now. The world knows everything. The player's character knows what
+ * this table says they know, and nothing else: what they saw, what they were told, what they
+ * read, what they worked out. The map, the codex, the narration, the suggestions and the
+ * prompt all read from here, so a secret cannot leak simply because it exists in a column.
+ */
+@Entity(
+    tableName = "player_knowledge",
+    indices = [Index("worldId"), Index("subjectId"), Index("subjectType")]
+)
+data class KnowledgeEntity(
+    @PrimaryKey val id: String = newId(),
+    val worldId: String,
+    /** CHARACTER, LOCATION, ITEM, FACTION, THREAD */
+    val subjectType: String,
+    val subjectId: String,
+    /** Kept alongside the id so the codex can show what was learned about whom. */
+    val subjectName: String = "",
+    /**
+     * Which part of the subject this covers: "exists", "name", "appearance", "outfit",
+     * "role", "goals", "secrets", "home", "routine", and so on. "exists" is the one that
+     * puts a place on the map or a person in the cast.
+     */
+    val field: String,
+    /** What the player learned, in the terms they learned it. Blank for a bare "exists". */
+    val value: String = "",
+    /** SEEN, VISITED, TOLD, OVERHEARD, READ, DEDUCED, SHOWN. */
+    val source: String = "SEEN",
+    /** Who or what it came from: a person's name, a document, a sign on a door. */
+    val sourceDetail: String = "",
+    val turnIndex: Int = 0,
+    val storyTime: String = "",
     val createdAt: Long = System.currentTimeMillis()
 )
