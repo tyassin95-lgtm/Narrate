@@ -46,40 +46,52 @@ object ChoiceGuard {
             .filter { it.isNotBlank() }
             .map { normalise(it) }
 
-        // How much of the menu is a way of passing time. One such option is a real choice;
-        // four of them is the app asking the player to pick which kind of nothing to do.
-        val stalled = SceneMomentum.read(snapshot).stalled
-        var idleKept = 0
+        // What kind of move the player has just made, and what kind they have been shown.
+        // Six wordings of "say goodnight" is one option offered six times, and no comparison
+        // of strings was ever going to notice.
+        val justDone = SuggestionQuality.recentlyDone(snapshot)
+        val recentlyOffered = SuggestionQuality.recentCategories(snapshot)
+        val takenThisTurn = mutableSetOf<String>()
 
         choices.forEach { choice ->
             val label = normalise(choice.label)
+            val category = SuggestionQuality.categoryOf(choice.label)
             val repeat = label.takeIf { it.length >= 8 }
                 ?.let { text -> alreadyDone.any { it == text || (it.length >= 12 && it.contains(text)) } }
                 ?: false
-            val duplicate = kept.any { sameOutcome(normalise(it.label), label) }
-            val idle = isFiller(choice.label)
 
-            val rejection = when {
+            // The hard checks first: an option that contradicts the world is reported as
+            // that, rather than as whichever softer rule happened to notice it too.
+            val rejection = firstProblem(snapshot, player, choice, introduced) ?: when {
                 repeat -> Rejection(
                     choice, "already-done",
                     "the player has just done this - it was their last turn, word for word"
                 )
-                duplicate -> Rejection(
+                category in justDone -> Rejection(
+                    choice, "already-done",
+                    "the player has just done this; \"${choice.label.take(40)}\" is the same move again"
+                )
+                category in takenThisTurn -> Rejection(
+                    choice, "duplicate",
+                    "it is the same kind of move as another option on this list, reworded"
+                )
+                kept.any { sameOutcome(normalise(it.label), label) } -> Rejection(
                     choice, "duplicate",
                     "it is another way of writing an option already on the list"
                 )
-                idle && stalled -> Rejection(
+                !SuggestionQuality.meaningful(choice.label, snapshot) -> Rejection(
                     choice, "filler",
-                    "the scene has already stalled, and this is another turn of waiting in it"
+                    "it changes nothing - that belongs in the narration, not on the menu"
                 )
-                idle && idleKept >= 1 -> Rejection(
-                    choice, "filler",
-                    "there is already an option for doing nothing, and two of them is not a choice"
+                category in recentlyOffered && category !in openEnded -> Rejection(
+                    choice, "repetitive",
+                    "this kind of move has been on the menu in the last few turns and nothing " +
+                        "has changed that would make it different now"
                 )
-                else -> firstProblem(snapshot, player, choice, introduced)
+                else -> null
             }
             if (rejection == null) {
-                if (idle) idleKept++
+                takenThisTurn += category
                 kept += choice
             } else {
                 rejected += rejection
@@ -87,6 +99,15 @@ object ChoiceGuard {
         }
         return Verdict(kept, rejected)
     }
+
+    /**
+     * Kinds of move that stay interesting however often they come round.
+     *
+     * Leaving, travelling somewhere and saying something true are not the same offer twice
+     * just because the category repeats - the situation around them is what makes them
+     * different, and the player should always be able to walk away.
+     */
+    private val openEnded = setOf("FAREWELL", "TRAVEL", "CONFESS", "CONFRONT", "AFFECTION", "REPLY_MESSAGE")
 
     /**
      * Housekeeping the player should never have to spend a move on.

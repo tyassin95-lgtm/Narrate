@@ -95,9 +95,16 @@ object WorldDigest {
 
     /** Where everything is. The single source of truth for geography and presence. */
     fun currentState(snapshot: WorldSnapshot): String = buildString {
+        // The clock, first, and stated as a fact rather than as a field to be edited.
+        val now = WorldClock.of(snapshot.world)
+        appendLine("# RIGHT NOW: ${now.full} (day ${now.dayNumber}, ${now.timeOfDay})")
+        appendLine(
+            "That is the time. It is correct, it is the only time, and it is not yours to " +
+                "change - report how long your beat takes and the world will move it."
+        )
+        appendLine()
         val world = snapshot.world
         appendLine("# CURRENT STATE (authoritative - outranks anything you remember)")
-        appendLine("Story time: ${world.storyTime} (day ${world.dayNumber}, ${world.timeOfDay})")
         appendLine("Turns played: ${world.turnCount}")
 
         val here = snapshot.currentLocation

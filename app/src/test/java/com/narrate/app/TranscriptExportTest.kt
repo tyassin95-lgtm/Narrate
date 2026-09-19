@@ -48,7 +48,8 @@ class TranscriptExportTest {
                 premise = "A teaching hospital and the streets around it.",
                 authoredCanon = "Calder City: everyone here works nights.",
                 openingNarration = "Adrian is walking home when he nearly walks into Liv.",
-                currentLocationId = "loc-street", turnCount = 2, storyTime = "Day 1, 2:41 AM"
+                currentLocationId = "loc-street", turnCount = 2,
+                clockMinute = 2 * 60 + 41, calendarEpoch = "2025-09-05"
             )
         )
         repo.saveLocations(
@@ -175,7 +176,7 @@ class TranscriptExportTest {
         val markdown = export()
         assertTrue(markdown.startsWith("# Calder City"))
         assertTrue(markdown.contains("| Turns played | 2 |"))
-        assertTrue(markdown.contains("| Story time | Day 1, 2:41 AM |"))
+        assertTrue(markdown.contains("| Story time | Friday 5 September, 2:41 AM |"))
         assertTrue(markdown.contains("| Model on the last turn | OPENAI gpt-5.6-luna |"))
         assertTrue(markdown.contains("> Calder City: everyone here works nights."))
         assertTrue(markdown.contains("The opening scene they asked for"))

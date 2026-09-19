@@ -104,7 +104,7 @@ class TurnPipelineTest {
         repo.saveWorld(
             WorldEntity(
                 id = worldId, name = "Tidewater", premise = "The tide runs on a timetable nobody set.",
-                currentLocationId = harbourId, storyTime = "Day 1, morning"
+                currentLocationId = harbourId, clockMinute = 9 * 60, calendarEpoch = "2025-09-05"
             )
         )
         repo.saveLocations(
@@ -142,7 +142,7 @@ class TurnPipelineTest {
 
             ===STATE===
             {
-              "story_time": "Day 1, midday",
+              "scene": {"minutes": 15},
               "summary": "Vale broke into Warehouse 9 and found Elena there.",
               "player": {"location": "Warehouse 9", "knowledge_add": ["Elena has a key to Warehouse 9"]},
               "characters_new": [{"name": "Elena Vasquez", "role": "dock clerk",
@@ -161,8 +161,8 @@ class TurnPipelineTest {
 
         val world = repo.world(worldId)!!
         assertEquals(1, world.turnCount)
-        assertEquals("Day 1, midday", world.storyTime)
-        assertEquals("midday", world.timeOfDay)
+        assertEquals("the clock moved by the length of the beat", 9 * 60L + 15, world.clockMinute)
+        assertEquals("morning", world.timeOfDay)
         assertEquals(warehouseId, world.currentLocationId)
 
         val characters = repo.characterDao.all(worldId)
@@ -192,9 +192,9 @@ class TurnPipelineTest {
 
     @Test
     fun `the next prompt carries the world state, not the model's memory`() = runBlocking {
-        scripted.nextResponse = minimalResponse("Day 1, midday")
+        scripted.nextResponse = minimalResponse()
         director.take(worldId, "Look around", "ACTION")
-        scripted.nextResponse = minimalResponse("Day 1, afternoon")
+        scripted.nextResponse = minimalResponse()
         director.take(worldId, "Wait", "ACTION")
 
         val prompt = scripted.lastPrompt
@@ -244,7 +244,7 @@ class TurnPipelineTest {
         assertTrue("the jump must be flagged", issues.any { it.category == "movement" })
 
         // And the next prompt must tell the narrator about it.
-        scripted.nextResponse = minimalResponse("Day 1, evening")
+        scripted.nextResponse = minimalResponse()
         director.take(worldId, "Follow him", "ACTION")
         assertTrue(scripted.lastPrompt.contains("CONTINUITY CORRECTIONS"))
     }
@@ -261,13 +261,13 @@ class TurnPipelineTest {
 
     @Test
     fun `the save is recoverable through a fresh repository instance`() = runBlocking {
-        scripted.nextResponse = minimalResponse("Day 2, dawn")
+        scripted.nextResponse = minimalResponse()
         director.take(worldId, "Sleep until dawn", "ACTION")
 
         val reopened = WorldRepository(ApplicationProvider.getApplicationContext())
         val snapshot = reopened.snapshot(worldId)!!
-        assertEquals("Day 2, dawn", snapshot.world.storyTime)
-        assertEquals(2, snapshot.world.dayNumber)
+        assertEquals(9 * 60L + 15, snapshot.world.clockMinute)
+        assertEquals(1, snapshot.world.dayNumber)
         assertEquals(1, snapshot.recentTurns.size)
         assertEquals("Vale", snapshot.player?.name)
     }
@@ -297,7 +297,7 @@ class TurnPipelineTest {
             - Say nothing and watch the tide with her
             ===STATE===
             {
-              "story_time": "Day 1, dusk",
+              "scene": {"minutes": 15},
               "summary": "Vale met Elena on the harbour steps at low tide.",
               "characters_new": [{"name": "Elena Vasquez", "role": "dock clerk", "location": "Old Harbour"}],
               "memories": [{"text": "Elena waited for Vale on the harbour steps.", "kind": "EVENT",
@@ -316,7 +316,7 @@ class TurnPipelineTest {
         assertTrue("the prose must be joined, not restarted", turn.narration.contains("she does not wave"))
         assertTrue(turn.narration.startsWith("The tide is further out"))
         assertTrue("the completed turn must carry choices", turn.choicesJson.contains("how long she has been waiting"))
-        assertEquals("Day 1, dusk", repo.world(worldId)!!.storyTime)
+        assertEquals(9 * 60L + 15, repo.world(worldId)!!.clockMinute)
         assertEquals(1, repo.characterDao.all(worldId).count { it.name.contains("Elena") })
 
         // The completion prompt must ask for a continuation, not a rewrite.
@@ -332,7 +332,7 @@ class TurnPipelineTest {
             ===NARRATION===
             The office is empty. Someone has taken the ledger from the desk and left the drawer open.
             ===STATE===
-            {"story_time": "Day 1, noon", "summary": "Vale found the ledger missing.",
+            {"scene": {"minutes": 15}, "summary": "Vale found the ledger missing.",
              "memories": [{"text": "The harbour ledger was taken from the office.", "kind": "DISCOVERY",
                "importance": 4, "subjects": []}]}
             ===END===
@@ -376,7 +376,7 @@ class TurnPipelineTest {
             - Walk around to the yard
             - Wait for the rain to pass
             ===STATE===
-            {"story_time": "Day 1, evening", "summary": "Vale reached the gate in the rain."}
+            {"scene": {"minutes": 15}, "summary": "Vale reached the gate in the rain."}
             ===END===
             """.trimIndent()
         )
@@ -417,7 +417,7 @@ class TurnPipelineTest {
             - Find the matches
             - Wait for your eyes to adjust
             ===STATE===
-            {"story_time": "Day 1, night", "summary": "The lamp went out."}
+            {"scene": {"minutes": 15}, "summary": "The lamp went out."}
             ===END===
             """.trimIndent()
         )
@@ -432,7 +432,7 @@ class TurnPipelineTest {
         assertTrue("no JSON may reach the page", !turn.narration.contains("story_time"))
         assertTrue("no markers may reach the page", !turn.narration.contains("==="))
         assertTrue(turn.choicesJson.contains("Find the matches"))
-        assertEquals("Day 1, night", repo.world(worldId)!!.storyTime)
+        assertEquals(9 * 60L + 15, repo.world(worldId)!!.clockMinute)
     }
 
     // --- suggested actions -------------------------------------------------------------
@@ -449,7 +449,7 @@ class TurnPipelineTest {
             - "Keep it. I'm two streets away."
             ===STATE===
             {
-              "story_time": "Day 1, 2:02 AM",
+              "scene": {"minutes": 15},
               "summary": "Vale lent Liv his jacket.",
               "characters_new": [{"name": "Liv Marchetti", "location": "Old Harbour",
                 "appearance": "Dark curls, soaked through."}],
@@ -477,7 +477,7 @@ class TurnPipelineTest {
             - "Get inside before you freeze."
             - Wait until the door closes before you go
             ===STATE===
-            {"story_time": "Day 1, 2:40 AM", "summary": "They reached her door."}
+            {"scene": {"minutes": 15}, "summary": "They reached her door."}
             ===END===
             """.trimIndent()
         )
@@ -486,7 +486,7 @@ class TurnPipelineTest {
 
         val offered = result.getOrThrow().parsed.choices.map { it.label }
         assertTrue("the ownership inversion must not reach the player", offered.none { it.contains("her jacket back") })
-        assertEquals("the sound ones survive", 2, offered.size)
+        assertEquals("the sound one survives; waiting on a doorstep is not a decision", 1, offered.size)
 
         // And it is recorded, so the player can see the guard working.
         val issues = repo.issueDao.forTurn(worldId, 1)
@@ -504,7 +504,7 @@ class TurnPipelineTest {
         director.take(worldId, "Check your pockets", "ACTION")
         scripted.prompts.clear()
 
-        scripted.enqueue(minimalResponse("Day 1, noon"))
+        scripted.enqueue(minimalResponse())
         director.take(worldId, "Look around", "ACTION")
 
         val prompt = scripted.prompts.first()
@@ -523,14 +523,14 @@ class TurnPipelineTest {
             - Say nothing
             - Shrug
             ===STATE===
-            {"story_time": "Day 1, 2:40 AM"}
+            {"scene": {"minutes": 15}}
             ===END===
             """.trimIndent()
         )
         director.take(worldId, "Walk her home", "ACTION")
         scripted.prompts.clear()
 
-        scripted.enqueue(minimalResponse("Day 1, 2:41 AM"))
+        scripted.enqueue(minimalResponse())
         director.take(worldId, "Think about it", "ACTION")
 
         val prompt = scripted.prompts.first()
@@ -553,7 +553,7 @@ class TurnPipelineTest {
             - Tell her
             - Say nothing
             ===STATE===
-            {"story_time": "Day 1, 2:40 AM"}
+            {"scene": {"minutes": 15}}
             ===END===
             """.trimIndent()
         )
@@ -565,7 +565,7 @@ class TurnPipelineTest {
         assertTrue(mute.resolution.contains("answers ordinary questions about himself"))
 
         scripted.prompts.clear()
-        scripted.enqueue(minimalResponse("Day 1, 2:41 AM"))
+        scripted.enqueue(minimalResponse())
         director.take(worldId, "Keep walking", "ACTION")
 
         val prompt = scripted.prompts.first()
@@ -575,7 +575,7 @@ class TurnPipelineTest {
 
     @Test
     fun `the narrator is told to write dialogue out rather than describe it`() = runBlocking {
-        scripted.enqueue(minimalResponse("Day 1, noon"))
+        scripted.enqueue(minimalResponse())
         director.take(worldId, "Look around", "ACTION")
 
         val prompt = scripted.prompts.first()
@@ -606,7 +606,7 @@ class TurnPipelineTest {
             - Offer her the umbrella
             - Hand over the umbrella and walk on
             ===STATE===
-            {"story_time": "Day 1, noon"}
+            {"scene": {"minutes": 15}}
             ===END===
             """.trimIndent()
         )
@@ -639,10 +639,10 @@ class TurnPipelineTest {
             ===CHOICES===
             - "Are you okay? You look frozen."
             - Ask where she is heading
-            - Say nothing and walk on
+            - Walk her as far as the corner
             - Yell at her to watch where she is going
             ===STATE===
-            {"story_time": "Day 1, noon"}
+            {"scene": {"minutes": 15}}
             ===END===
             """.trimIndent()
         )
@@ -658,7 +658,7 @@ class TurnPipelineTest {
     @Test
     fun `a sandbox world tells the narrator not to manufacture drama`() = runBlocking {
         repo.saveWorld(repo.world(worldId)!!.copy(playStyle = "SANDBOX"))
-        scripted.nextResponse = minimalResponse("Day 1, midday")
+        scripted.nextResponse = minimalResponse()
         director.take(worldId, "Sit on the wall and watch the boats", "ACTION")
 
         val prompt = scripted.prompts.first()
@@ -666,13 +666,13 @@ class TurnPipelineTest {
         assertTrue(prompt.contains("Do not manufacture emergencies"))
         assertTrue(prompt.contains("Nothing dramatic is owed to any turn"))
         assertTrue("choices should suit a quiet world", prompt.contains("At least one option should be small and unhurried"))
-        assertTrue(prompt.contains("The CHOICES section is never optional"))
+        assertTrue("and a quiet turn may offer very little", prompt.contains("There is no required number of options"))
     }
 
     @Test
     fun `a dramatic world keeps its pressure`() = runBlocking {
         repo.saveWorld(repo.world(worldId)!!.copy(playStyle = "DRAMATIC"))
-        scripted.nextResponse = minimalResponse("Day 1, midday")
+        scripted.nextResponse = minimalResponse()
         director.take(worldId, "Run", "ACTION")
 
         val prompt = scripted.prompts.first()
@@ -696,7 +696,7 @@ class TurnPipelineTest {
             ===CHOICES===
             - Turn around
             ===STATE===
-            {"story_time": "Day 1, noon",
+            {"scene": {"minutes": 15},
              "characters_new": [{"name": "Vale", "role": "a stranger with your name",
                "location": "Old Harbour"}]}
             ===END===
@@ -718,7 +718,7 @@ class TurnPipelineTest {
     @Test
     fun `every call is recorded against the world with an estimated cost`() = runBlocking {
         settings.setNarrationModel(ProviderId.OPENAI, "gpt-5.4-mini")
-        scripted.enqueue(minimalResponse("Day 1, midday"), inputTokens = 12_000, outputTokens = 900)
+        scripted.enqueue(minimalResponse(), inputTokens = 12_000, outputTokens = 900)
         director.take(worldId, "Look around", "ACTION")
 
         val usage = repo.usageForWorld(worldId)
@@ -736,7 +736,7 @@ class TurnPipelineTest {
 
     @Test
     fun `token counts are estimated when the provider reports none`() = runBlocking {
-        scripted.enqueue(minimalResponse("Day 1, midday"))
+        scripted.enqueue(minimalResponse())
         director.take(worldId, "Look around", "ACTION")
         val event = repo.usageForWorld(worldId).first()
         assertTrue("input tokens should be estimated from the prompt", event.inputTokens > 100)
@@ -752,7 +752,7 @@ class TurnPipelineTest {
             - Turn back
             - Keep walking
             ===STATE===
-            {"story_time": "Day 1, night", "summary": "Vale walked into the fog."}
+            {"scene": {"minutes": 15}, "summary": "Vale walked into the fog."}
             ===END===
             """.trimIndent()
         )
@@ -765,7 +765,7 @@ class TurnPipelineTest {
 
     @Test
     fun `usage is deleted with its world`() = runBlocking {
-        scripted.nextResponse = minimalResponse("Day 1, midday")
+        scripted.nextResponse = minimalResponse()
         director.take(worldId, "Look around", "ACTION")
         assertTrue(repo.usageForWorld(worldId).isNotEmpty())
         repo.deleteWorld(worldId)
@@ -788,7 +788,7 @@ class TurnPipelineTest {
                     - Keep watching the water
                     - Wait a little longer
                     ===STATE===
-                    {"story_time": "Day 1, 9:0$index AM", "summary": "Waiting."}
+                    {"scene": {"minutes": 15}, "summary": "Waiting."}
                     ===END===
                     """.trimIndent()
                 )
@@ -807,32 +807,36 @@ class TurnPipelineTest {
 
         // And the way out is no longer something the player has to find on a menu: the
         // narrator is told the scene has stopped, and the screen has a Skip time button.
-        scripted.enqueue(minimalResponse("Day 1, 9:30 AM"))
+        scripted.enqueue(minimalResponse())
         director.take(worldId, "Wait", "ACTION")
         assertTrue(scripted.lastPrompt.contains("THIS SCENE HAS STOPPED MOVING"))
     }
 
     @Test
-    fun `skipping time moves the clock by hours even when the narrator does not`() = runBlocking {
-        scripted.enqueue(minimalResponse("Day 1, 9:00 AM"))
+    fun `a time control lands the clock exactly where the button said`() = runBlocking {
+        scripted.enqueue(minimalResponse())
         director.take(worldId, "Look around", "ACTION")
+        val before = repo.world(worldId)!!.clockMinute
 
-        // The narrator's reply moves the clock three minutes. The button promised an hour.
-        scripted.enqueue(minimalResponse("Day 1, 9:03 AM"))
-        director.take(worldId, WorldActions.playerInput(WorldActions.SKIP, repo.snapshot(worldId)!!), WorldActions.SKIP)
+        // The narrator's reply covers fifteen minutes. The button promised until midday.
+        val snapshot = repo.snapshot(worldId)!!
+        val option = WorldActions.options(snapshot).first { it.id == "midday" }
+        scripted.enqueue(minimalResponse())
+        director.takeTimeControl(worldId, WorldActions.SKIP, option)
 
         val world = repo.world(worldId)!!
-        assertEquals("Day 1, 10:00 AM", world.storyTime)
+        assertEquals("the clock is put where the control pointed", option.targetMinute, world.clockMinute)
+        assertTrue("which is hours on, not minutes", world.clockMinute - before > 60)
         assertTrue(
             "and the narrator was told this was a time control, not an ordinary turn",
-            scripted.lastPrompt.contains("THE PLAYER USED A TIME CONTROL")
+            scripted.lastPrompt.contains("A TIME CONTROL")
         )
-        assertTrue(scripted.lastPrompt.contains("the world ran"))
+        assertTrue(scripted.lastPrompt.contains("The world ran while it passed"))
     }
 
     @Test
     fun `a model that refuses the player's turn does not write it into their world`() = runBlocking {
-        scripted.enqueue(minimalResponse("Day 1, 9:00 AM"))
+        scripted.enqueue(minimalResponse())
         director.take(worldId, "Look around", "ACTION")
         val before = repo.turnDao.all(worldId).size
 
@@ -857,37 +861,45 @@ class TurnPipelineTest {
 
     @Test
     fun `a turn whose prose and clock disagree about the hour is written down`() = runBlocking {
-        scripted.enqueue(minimalResponse("Day 1, 9:00 AM"))
+        scripted.enqueue(minimalResponse())
         director.take(worldId, "Look around", "ACTION")
 
         scripted.enqueue(
             """
             ===NARRATION===
-            Twenty minutes later the bell on the chandler's door goes and somebody comes out.
+            Two hours later the bell on the chandler's door goes and somebody comes out.
             ===CHOICES===
             - Go over
             - Stay where you are
             ===STATE===
-            {"story_time": "Day 1, 9:03 AM", "summary": "Someone comes out."}
+            {"scene": {"minutes": 15}, "summary": "Someone comes out."}
             ===END===
             """.trimIndent()
         )
         director.take(worldId, "Watch the door", "ACTION")
 
         val issues = repo.issueDao.forTurn(worldId, 1)
-        val clock = issues.single { it.category == "clock" }
-        assertTrue(clock.description.contains("20 minutes"))
-        assertTrue(clock.description.contains("moved 3"))
+        val clock = issues.first { it.category == "clock" }
+        assertTrue(clock.description, clock.description.contains("120 minutes"))
+        assertTrue("and the beat's real length is named", clock.description.contains("recorded as 15"))
+        assertTrue(clock.resolution.contains("scene"))
     }
 
-    private fun minimalResponse(storyTime: String) = """
+    /**
+     * A well-formed turn that takes [minutes] of story time.
+     *
+     * The narrator no longer writes a clock reading anywhere: it reports how long its beat
+     * took and the world moves its own clock by that, which is the only arrangement in which
+     * the two cannot disagree.
+     */
+    private fun minimalResponse(minutes: Int = 15) = """
         ===NARRATION===
         Nothing much happens.
         ===CHOICES===
-        - Wait a while longer
+        - Ask the harbourmaster what the tide is doing
         - Walk down to the water
         ===STATE===
-        {"story_time": "$storyTime", "summary": "A quiet moment."}
+        {"scene": {"minutes": $minutes}, "summary": "A quiet moment."}
         ===END===
     """.trimIndent()
 }

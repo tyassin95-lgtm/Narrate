@@ -165,12 +165,23 @@ fun PlayScreen(
                 )
             }
 
-            // Time is a control, not a suggestion. Skipping ahead, going home and sleeping are
-            // the three things every player does constantly and nobody has ever enjoyed
-            // picking off a menu of suggested actions.
+            // A scene that has finished says so, rather than padding the menu out to four.
+            if (state.currentChoices.isEmpty() && !state.loading && state.turns.isNotEmpty()) {
+                Text(
+                    "That scene has played out. Type what you do next, or move the clock.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NarrateColors.TextMuted,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
+
+            // Time is a control, not a suggestion - and the options come from the calendar,
+            // so "until the shift ends" and "to Friday 8 PM" exist when the world has them.
             TimeControls(
                 enabled = !state.loading && state.turns.isNotEmpty(),
                 canGoHome = state.canGoHome,
+                clock = state.clock,
+                options = state.timeOptions,
                 onAction = viewModel::worldAction
             )
 
@@ -573,17 +584,77 @@ private fun SuggestedActions(
 private fun TimeControls(
     enabled: Boolean,
     canGoHome: Boolean,
-    onAction: (String) -> Unit
+    clock: String,
+    options: List<WorldActions.TimeOption>,
+    onAction: (String, WorldActions.TimeOption?) -> Unit
 ) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        TimeControl("Skip time", enabled, Modifier.weight(1f)) { onAction(WorldActions.SKIP) }
-        TimeControl("Go home", enabled && canGoHome, Modifier.weight(1f)) { onAction(WorldActions.HOME) }
-        TimeControl("Sleep", enabled, Modifier.weight(1f)) { onAction(WorldActions.SLEEP) }
+    var skipOpen by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
+        if (clock.isNotBlank()) {
+            Text(
+                clock,
+                style = MaterialTheme.typography.labelSmall,
+                color = NarrateColors.TextMuted,
+                modifier = Modifier.padding(start = 4.dp, bottom = 3.dp)
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TimeControl(
+                if (skipOpen) "Skip to..." else "Skip time",
+                enabled && options.isNotEmpty(),
+                Modifier.weight(1f)
+            ) { skipOpen = !skipOpen }
+            TimeControl("Go home", enabled && canGoHome, Modifier.weight(1f)) {
+                skipOpen = false
+                onAction(WorldActions.HOME, null)
+            }
+            TimeControl("Sleep", enabled, Modifier.weight(1f)) {
+                skipOpen = false
+                onAction(WorldActions.SLEEP, null)
+            }
+        }
+        // Where the clock can usefully go from here, taken from the calendar rather than
+        // from a fixed list: the shift that ends at six, Friday at eight, tomorrow morning.
+        AnimatedVisibility(visible = skipOpen && enabled) {
+            Column(
+                Modifier.padding(top = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                options.forEach { option ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(NarrateColors.SurfaceElevated)
+                            .border(1.dp, NarrateColors.Divider, RoundedCornerShape(8.dp))
+                            .clickable {
+                                skipOpen = false
+                                onAction(WorldActions.SKIP, option)
+                            }
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            option.label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NarrateColors.TextPrimary,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (option.detail.isNotBlank()) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                option.detail,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = NarrateColors.TextMuted,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

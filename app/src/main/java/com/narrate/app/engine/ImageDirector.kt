@@ -148,7 +148,15 @@ class ImageDirector(
                         described = established(identity?.canonicalDescription, character.appearance),
                         noun = "a person"
                     )
+                    // Their clothes are current state, not the sentence they were created
+                    // with, and whatever has washed off since is not drawn.
                     if (character.outfit.isNotBlank()) appendLine("Currently wearing: ${character.outfit}")
+                    Wardrobe.current(character, snapshot.world.clockMinute).takeIf { it.isNotEmpty() }?.let {
+                        appendLine("Also visible right now: ${it.joinToString("; ") { detail -> detail.text }}")
+                    }
+                    Wardrobe.expired(character, snapshot.world.clockMinute).takeIf { it.isNotEmpty() }?.let {
+                        appendLine("NOT present any more, do not draw: ${it.joinToString("; ") { detail -> detail.text }}")
+                    }
                     if (character.physicalState.isNotBlank()) appendLine("Current condition: ${character.physicalState}")
                     if (identity?.currentVariant?.isNotBlank() == true) appendLine("Recent change: ${identity.currentVariant}")
                     if (character.personality.isNotBlank()) {
@@ -299,7 +307,7 @@ class ImageDirector(
                         repo.visualForSubject(here.id)?.let { identities += it }
                         subjectIds += here.id
                     }
-                    appendLine("WHEN: ${world.storyTime}.")
+                    appendLine("WHEN: ${WorldClock.of(world).full}.")
                     if (player != null) {
                         appendLine()
                         appendLine(
@@ -307,6 +315,9 @@ class ImageDirector(
                                 player.appearance.ifBlank { "no description on record; keep them plausible and consistent" }
                         )
                         if (player.outfit.isNotBlank()) appendLine("Wearing: ${player.outfit}")
+                        Wardrobe.current(player, world.clockMinute).takeIf { it.isNotEmpty() }?.let {
+                            appendLine("Also: ${it.joinToString("; ") { detail -> detail.text }}")
+                        }
                         if (player.physicalState.isNotBlank()) appendLine("Condition: ${player.physicalState}")
                         repo.visualForSubject(player.id)?.let { identities += it }
                         subjectIds += player.id
@@ -319,6 +330,9 @@ class ImageDirector(
                                 npc.appearance.ifBlank { "no description on record; keep them plausible and consistent" }
                         )
                         if (npc.outfit.isNotBlank()) appendLine("Wearing: ${npc.outfit}")
+                        Wardrobe.current(npc, world.clockMinute).takeIf { it.isNotEmpty() }?.let {
+                            appendLine("Also: ${it.joinToString("; ") { detail -> detail.text }}")
+                        }
                         if (npc.physicalState.isNotBlank()) appendLine("Condition: ${npc.physicalState}")
                         repo.visualForSubject(npc.id)?.let { identities += it }
                         subjectIds += npc.id

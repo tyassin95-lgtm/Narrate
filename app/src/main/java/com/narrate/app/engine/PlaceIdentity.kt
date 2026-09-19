@@ -98,6 +98,16 @@ object PlaceIdentity {
         if (x.isBlank() || y.isBlank()) return false
         if (x == y) return true
 
+        // A number on the door is the whole of an address's identity. 1247 Maple Street is
+        // not Maple Street, and 1249 is not 1247 - and until streets existed as places in
+        // their own right, every house on a road resolved to the road.
+        val numberA = Geography.addressNumberIn(a)
+        val numberB = Geography.addressNumberIn(b)
+        if (numberA != numberB) return false
+
+        // Nor is a street the same as anything standing on it.
+        if (Geography.isStreet(a) != Geography.isStreet(b)) return false
+
         val dx = distinctive(a)
         val dy = distinctive(b)
         if (dx.isEmpty() || dy.isEmpty()) return false
@@ -134,6 +144,9 @@ object PlaceIdentity {
         val words = name.normalizeName().split(' ')
         val type = declared.uppercase().ifBlank { "BUILDING" }
         return when {
+            // A road is a road. It is the one shape a town is actually made of, and calling
+            // it a district or a building is what left the map with nothing to draw.
+            Geography.isStreet(name) -> Geography.STREET
             // A pavement is not a room, whatever else the name says about it.
             words.any { it in outdoorWords } -> "LANDMARK"
             words.any { it in roomWords } && type in setOf("BUILDING", "", "LANDMARK") -> "ROOM"

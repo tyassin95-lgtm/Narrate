@@ -65,9 +65,34 @@ object PlayerKnowledge {
     const val OVERHEARD = "OVERHEARD"
     const val READ = "READ"
     const val DEDUCED = "DEDUCED"
+    const val MESSAGED = "MESSAGED"
 
-    /** Everything a person gives away simply by being in the room. */
-    private val onSight = listOf(NAME, APPEARANCE, OUTFIT, VOICE)
+    /**
+     * How well the player knows somebody, which is not a yes or a no.
+     *
+     * A real playthrough had Adrian hear a woman call about the laundry from an upstairs
+     * window and instantly acquire her full name, her face, her clothes and her voice. The
+     * knowledge table only had "met" and "not met", so the moment anything happened involving
+     * her, everything happened.
+     */
+    const val UNKNOWN = "UNKNOWN"
+    const val HEARD_OF = "HEARD_OF"
+    const val HEARD_UNSEEN = "HEARD_UNSEEN"
+    const val REMOTE = "REMOTE"
+    const val SEEN_ONLY = "SEEN_ONLY"
+    const val MET = "MET"
+
+    /** Where the player stands with somebody. */
+    const val ACQUAINTANCE = "acquaintance"
+
+    /** How the player refers to somebody whose name they do not have. */
+    const val DESCRIPTOR = "descriptor"
+
+    /** Everything a person gives away simply by being in the room and speaking to you. */
+    private val onSight = listOf(APPEARANCE, OUTFIT, VOICE)
+
+    /** What is true of somebody heard and not seen: that they are there, and nothing else. */
+    private val onHearing = listOf(VOICE)
 
     /** Everything about a person that has to come from somewhere. */
     val hiddenCharacterFields = listOf(
@@ -208,10 +233,12 @@ object PlayerKnowledge {
         character: CharacterEntity,
         turnIndex: Int,
         storyTime: String,
-        already: Set<String>
-    ): List<KnowledgeEntity> = (listOf(EXISTS) + onSight)
-        .filter { it !in already }
-        .map { field ->
+        already: Set<String>,
+        /** True when the story actually gave their name, rather than the app knowing it. */
+        named: Boolean = false
+    ): List<KnowledgeEntity> {
+        val fields = listOf(EXISTS) + onSight + (if (named) listOf(NAME) else emptyList())
+        val rows = fields.filter { it !in already }.map { field ->
             row(
                 worldId, CHARACTER, character.id, character.name, field,
                 value = when (field) {
@@ -227,6 +254,128 @@ object PlayerKnowledge {
                 storyTime = storyTime
             )
         }
+        val level = if (named) MET else SEEN_ONLY
+        return rows + standing(worldId, character, level, turnIndex, storyTime, already)
+    }
+
+    /**
+     * Somebody heard through a door, a wall or an upstairs window.
+     *
+     * They exist. There is a voice. That is the whole of it: no name, no face, no job, and no
+     * entry in the cast list under a name nobody has said out loud.
+     */
+    fun onHearing(
+        worldId: String,
+        character: CharacterEntity,
+        descriptor: String,
+        turnIndex: Int,
+        storyTime: String,
+        already: Set<String>
+    ): List<KnowledgeEntity> {
+        val rows = (listOf(EXISTS) + onHearing).filter { it !in already }.map { field ->
+            row(
+                worldId, CHARACTER, character.id, character.name, field,
+                value = if (field == VOICE) character.voice else "",
+                source = OVERHEARD, sourceDetail = descriptor.ifBlank { "heard, not seen" },
+                turnIndex = turnIndex, storyTime = storyTime
+            )
+        }
+        val label = if (DESCRIPTOR in already) emptyList() else listOf(
+            row(
+                worldId, CHARACTER, character.id, character.name, DESCRIPTOR,
+                value = descriptor.ifBlank { "a voice from another room" },
+                source = OVERHEARD, turnIndex = turnIndex, storyTime = storyTime
+            )
+        )
+        return rows + label + standing(worldId, character, HEARD_UNSEEN, turnIndex, storyTime, already)
+    }
+
+    /**
+     * Somebody who has written to the player, or spoken to them on the phone.
+     *
+     * They have a name and a number. They do not have a face: the player has never been in a
+     * room with them, and writing them as though they had met is the mistake in the other
+     * direction from treating a text as an arrival.
+     */
+    fun onRemoteContact(
+        worldId: String,
+        character: CharacterEntity,
+        how: String,
+        turnIndex: Int,
+        storyTime: String,
+        already: Set<String>
+    ): List<KnowledgeEntity> {
+        val rows = listOf(EXISTS, NAME).filter { it !in already }.map { field ->
+            row(
+                worldId, CHARACTER, character.id, character.name, field,
+                value = if (field == NAME) character.name else "",
+                source = MESSAGED, sourceDetail = how.ifBlank { "a message" },
+                turnIndex = turnIndex, storyTime = storyTime
+            )
+        }
+        return rows + standing(worldId, character, REMOTE, turnIndex, storyTime, already)
+    }
+
+    /**
+     * Records how well the player knows somebody, and only ever upgrades it.
+     *
+     * Hearing a voice after meeting somebody does not turn them back into a stranger.
+     */
+    private fun standing(
+        worldId: String,
+        character: CharacterEntity,
+        level: String,
+        turnIndex: Int,
+        storyTime: String,
+        already: Set<String>
+    ): List<KnowledgeEntity> {
+        if (ACQUAINTANCE in already) return emptyList()
+        return listOf(
+            row(
+                worldId, CHARACTER, character.id, character.name, ACQUAINTANCE,
+                value = level, source = SEEN, turnIndex = turnIndex, storyTime = storyTime
+            )
+        )
+    }
+
+    private val ladder = listOf(UNKNOWN, HEARD_OF, HEARD_UNSEEN, REMOTE, SEEN_ONLY, MET)
+
+    /** Where the player stands with somebody right now. */
+    fun acquaintance(snapshot: WorldSnapshot, characterId: String): String {
+        if (legacy(snapshot)) return MET
+        val rows = snapshot.knowledge.filter { it.subjectId == characterId }
+        if (rows.isEmpty()) return UNKNOWN
+        val recorded = rows.filter { it.field == ACQUAINTANCE }.map { it.value }
+        val best = recorded.maxByOrNull { ladder.indexOf(it).coerceAtLeast(0) }
+        if (best != null) return best
+        // A world written before standing was recorded: infer it from what is known.
+        val fields = rows.map { it.field }.toSet()
+        return when {
+            APPEARANCE in fields && NAME in fields -> MET
+            APPEARANCE in fields -> SEEN_ONLY
+            NAME in fields -> REMOTE
+            else -> HEARD_UNSEEN
+        }
+    }
+
+    /** Raises how well the player knows somebody, never lowers it. */
+    fun raise(current: String, level: String): String =
+        if (ladder.indexOf(level) > ladder.indexOf(current)) level else current
+
+    /**
+     * What the player would call this person: their name, or what they can see of them.
+     *
+     * A stranger is a stranger on the screen too. The codex used to list a full name and a
+     * job for somebody the player had heard cough in another room.
+     */
+    fun displayName(snapshot: WorldSnapshot, character: CharacterEntity): String {
+        if (character.isPlayer || legacy(snapshot)) return character.name
+        if (knows(snapshot, character.id, NAME)) return character.name
+        val descriptor = learned(snapshot, character.id, DESCRIPTOR)?.value
+        if (!descriptor.isNullOrBlank()) return descriptor
+        val look = character.appearance.split(Regex("[,.;]")).firstOrNull()?.trim()
+        return look?.takeIf { it.isNotBlank() }?.let { "someone: $it" } ?: "someone the player has not been introduced to"
+    }
 
     fun onArriving(
         worldId: String,
@@ -281,9 +430,20 @@ object PlayerKnowledge {
             )
             inScene.forEach { npc ->
                 val fields = knownFields(snapshot, npc.id)
-                val known = fields.filter { it != EXISTS }.sorted()
+                val known = fields.filter { it !in setOf(EXISTS, ACQUAINTANCE, DESCRIPTOR) }.sorted()
                 val unknown = hiddenCharacterFields.filter { it !in fields && fieldHasContent(npc, it) }
-                appendLine("- ${npc.name}: knows ${if (known.isEmpty()) "nothing beyond the sight of them" else known.joinToString(", ")}.")
+                val standing = acquaintance(snapshot, npc.id)
+                appendLine(
+                    "- ${npc.name} [${standing.lowercase().replace('_', ' ')}]: knows " +
+                        (if (known.isEmpty()) "nothing beyond the sight of them" else known.joinToString(", ")) + "."
+                )
+                if (NAME !in fields) {
+                    appendLine(
+                        "  THE PLAYER DOES NOT KNOW THIS PERSON'S NAME. Call them what the " +
+                            "player can see - \"${displayName(snapshot, npc)}\" - never " +
+                            "\"${npc.name}\", until somebody says it out loud on the page."
+                    )
+                }
                 if (unknown.isNotEmpty()) {
                     appendLine("  Does NOT know: ${unknown.joinToString(", ")}. Your protagonist cannot refer to any of it.")
                 }

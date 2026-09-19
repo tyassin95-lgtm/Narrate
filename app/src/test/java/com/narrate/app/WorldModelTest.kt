@@ -72,7 +72,7 @@ class WorldModelTest {
         val prompt = Prompts.gameMaster(WorldEntity(name = "Calder City"))
         assertTrue(prompt.contains("Places contain each other"))
         assertTrue(prompt.contains("shared house is not the same place as somebody's bedroom"))
-        assertTrue(prompt.contains("THE CLOCK MOVES"))
+        assertTrue("and the clock is the world's, not the narrator's", prompt.contains("THE CLOCK IS NOT YOURS"))
     }
 
     // --- A phone that was switched off ---------------------------------------------------

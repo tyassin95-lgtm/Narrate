@@ -201,7 +201,7 @@ class LivingWorldTest {
                 Choice("c3", "Ask Liv what the deadline actually is", kind = "ACTION")
             )
         )
-        assertEquals("one way of holding still is a choice; three is not", listOf("c0", "c3"), verdict.kept.map { it.id })
+        assertEquals("none of them is a decision", listOf("c3"), verdict.kept.map { it.id })
         assertTrue(verdict.rejected.all { it.category == "filler" })
     }
 
@@ -216,7 +216,10 @@ class LivingWorldTest {
             )
         )
         assertEquals(listOf("c1"), verdict.kept.map { it.id })
-        assertTrue(verdict.rejected.single().reason.contains("already stalled"))
+        assertTrue(
+            "waiting again is refused, whether as a chore or as a repeat",
+            verdict.rejected.single().category in setOf("filler", "already-done", "repetitive")
+        )
     }
 
     @Test
@@ -417,6 +420,6 @@ class LivingWorldTest {
         assertTrue("recurring people have to be distinguishable", prompt.contains("must not sound alike or move alike"))
         assertTrue("no countdown arithmetic", prompt.contains("Do not do arithmetic in the"))
         assertTrue(prompt.contains("has no sunlight in it"))
-        assertTrue("and no menus made of nothing", prompt.contains("it is not a choice, it is a chore"))
+        assertTrue("and no menus made of nothing", prompt.contains("is not a choice, it is a chore"))
     }
 }

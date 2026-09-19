@@ -34,7 +34,9 @@ class StateApplier(private val repo: WorldRepository) {
         snapshot: WorldSnapshot,
         delta: StateDelta,
         turnIndex: Int,
-        narration: String
+        narration: String,
+        /** What the player did: an ordinary turn, the opening, or one of the time controls. */
+        kind: String = "ACTION"
     ): ApplyResult {
         val report = ContinuityGuard.Report()
         val worldId = snapshot.world.id
@@ -60,6 +62,87 @@ class StateApplier(private val repo: WorldRepository) {
          * and failing that it goes inside whatever contains where the player is standing, with
          * a route from where they set out.
          */
+        /**
+         * The street a place stands on, created if the world has not drawn it yet.
+         *
+         * A town is made of streets, and until this the app had no such thing: "1247 Maple
+         * Street" was a building with no road under it, so nothing could be two doors down
+         * from anything. Naming an address now brings the road into being, once, with a fixed
+         * line on the plane that every address on it is arranged along.
+         */
+        suspend fun ensureStreet(name: String, districtName: String?): LocationEntity? {
+            val streetName = Geography.streetNameIn(name) ?: return null
+            findLocation(streetName)?.takeIf { it.type == Geography.STREET }?.let { return it }
+            locations.firstOrNull { it.name.equals(streetName, true) }?.let { existing ->
+                if (existing.type == Geography.STREET) return existing
+            }
+            val geometry = Geography.streetGeometry(streetName, districtName)
+            val district = districtName?.let { named -> locations.firstOrNull { it.name.equals(named, true) } }
+            val street = LocationEntity(
+                id = newId(),
+                worldId = worldId,
+                name = streetName,
+                type = Geography.STREET,
+                parentId = district?.id,
+                description = "A street in ${districtName ?: "the area"}.",
+                discovered = false,
+                firstSeenTurn = turnIndex,
+                mapX = geometry.x,
+                mapY = geometry.y,
+                spanAngle = geometry.angle,
+                spanLength = geometry.length
+            )
+            locations += street
+            repo.saveLocation(street)
+            return street
+        }
+
+        /**
+         * Where a place actually is, decided by the town rather than by the screen.
+         *
+         * In order of authority: the address it carries, the street it is on, the building it
+         * is a room in, and only then anything the narration said about direction and
+         * distance. A place with none of those goes somewhere sensible in its district and
+         * stays there.
+         */
+        suspend fun placeOnMap(
+            name: String,
+            type: String,
+            parent: LocationEntity?,
+            here: LocationEntity?,
+            hintText: String
+        ): Triple<Float, Float, String?> {
+            // A room is not somewhere else: it is inside its building, at the same point.
+            if (Geography.sharesPositionWithParent(type) && parent != null) {
+                return Triple(parent.mapX, parent.mapY, parent.streetId)
+            }
+            val districtName = generateSequence(parent ?: here) { child ->
+                child.parentId?.let { id -> locations.firstOrNull { it.id == id } }
+            }.firstOrNull { it.type == "DISTRICT" || it.type == "SETTLEMENT" }?.name
+
+            if (type == Geography.STREET) {
+                val geometry = Geography.streetGeometry(name, districtName)
+                return Triple(geometry.x, geometry.y, null)
+            }
+            ensureStreet(name, districtName)?.let { street ->
+                val number = Geography.addressNumberIn(name) ?: 0
+                val (x, y) = Geography.positionOnStreet(street, number, name)
+                return Triple(x, y, street.id)
+            }
+            val anchors = listOfNotNull(parent, here).filter { it.mapX > 0f || it.mapY > 0f }
+            if (anchors.isEmpty()) {
+                val (x, y) = Geography.looseNear(districtName, name, locations)
+                return Triple(x, y, null)
+            }
+            val (x, y) = MapPlacement.place(
+                anchors = anchors,
+                existing = locations,
+                seed = locations.size,
+                hint = MapPlacement.Hint(text = hintText)
+            )
+            return Triple(x, y, null)
+        }
+
         suspend fun ensureLocation(reference: String?, originHint: String): LocationEntity? {
             if (reference.isNullOrBlank()) return null
             findLocation(reference)?.let { return it }
@@ -86,21 +169,24 @@ class StateApplier(private val repo: WorldRepository) {
                 else -> here?.let { locations.firstOrNull { p -> p.id == it.parentId } }
             }
 
-            // On the map it goes beside what it hangs off: its parent, the place it stands
-            // outside of, or the place the player walked from.
-            val (x, y) = MapPlacement.place(
-                anchors = listOfNotNull(parent, beside, here),
-                existing = locations,
-                seed = locations.size,
-                // Whatever the turn said about getting there is the only survey this place
-                // will ever get: "two streets north", "across the road", "a bus ride out".
-                hint = MapPlacement.Hint(text = narration.takeLast(1200))
+            val type = PlaceIdentity.typeFromName(reference, "BUILDING")
+            val (x, y, streetId) = placeOnMap(
+                name = reference,
+                type = type,
+                parent = parent ?: beside,
+                here = here,
+                hintText = narration.takeLast(1200)
             )
+            val geometry = if (type == Geography.STREET) {
+                Geography.streetGeometry(reference.trim(), null)
+            } else {
+                null
+            }
             val created = LocationEntity(
                 id = newId(),
                 worldId = worldId,
                 name = reference.trim(),
-                type = PlaceIdentity.typeFromName(reference, "BUILDING"),
+                type = type,
                 parentId = parent?.id?.takeIf { it != here?.id || namedWithin != null },
                 description = "First referenced $originHint.",
                 // Whether the player knows about it is decided by what they saw and were
@@ -108,7 +194,11 @@ class StateApplier(private val repo: WorldRepository) {
                 discovered = false,
                 firstSeenTurn = turnIndex,
                 mapX = x,
-                mapY = y
+                mapY = y,
+                spanAngle = geometry?.angle ?: 0f,
+                spanLength = geometry?.length ?: 0f,
+                streetId = streetId,
+                addressNumber = Geography.addressNumberIn(reference) ?: 0
             )
             locations += created
             repo.saveLocation(created)
@@ -154,26 +244,25 @@ class StateApplier(private val repo: WorldRepository) {
                 return@forEach
             }
             val parent = findLocation(incoming.parent)
-            // Anchored to whatever the turn says it is attached to, so the map keeps meaning
-            // something: the parent first, then anything it was declared to connect to, then
-            // wherever the player is standing when they find it.
-            val neighbours = incoming.connectsTo.mapNotNull { findLocation(it) }
-            val (x, y) = MapPlacement.place(
-                anchors = listOfNotNull(parent) + neighbours +
-                    listOfNotNull(locations.firstOrNull { it.id == snapshot.currentLocation?.id }),
-                existing = locations,
-                seed = locations.size,
-                hint = MapPlacement.Hint(
-                    text = listOf(incoming.description, incoming.travelTime, narration.takeLast(800))
-                        .joinToString(" "),
-                    travelTime = incoming.travelTime
-                )
+            val newType = PlaceIdentity.typeFromName(incoming.name, incoming.type)
+            val (x, y, streetId) = placeOnMap(
+                name = incoming.name,
+                type = newType,
+                parent = parent,
+                here = locations.firstOrNull { it.id == snapshot.currentLocation?.id },
+                hintText = listOf(incoming.description, incoming.travelTime, narration.takeLast(800))
+                    .joinToString(" ")
             )
+            val geometry = if (newType == Geography.STREET) {
+                Geography.streetGeometry(incoming.name.trim(), parent?.name)
+            } else {
+                null
+            }
             val created = LocationEntity(
                 id = newId(),
                 worldId = worldId,
                 name = incoming.name.trim(),
-                type = PlaceIdentity.typeFromName(incoming.name, incoming.type),
+                type = newType,
                 parentId = parent?.id,
                 description = incoming.description,
                 atmosphere = incoming.atmosphere,
@@ -182,7 +271,11 @@ class StateApplier(private val repo: WorldRepository) {
                 discovered = false,
                 firstSeenTurn = turnIndex,
                 mapX = x,
-                mapY = y
+                mapY = y,
+                spanAngle = geometry?.angle ?: 0f,
+                spanLength = geometry?.length ?: 0f,
+                streetId = streetId,
+                addressNumber = Geography.addressNumberIn(incoming.name) ?: 0
             )
             locations += created
             repo.saveLocation(created)
@@ -589,7 +682,7 @@ class StateApplier(private val repo: WorldRepository) {
                 id = newId(), worldId = worldId, kind = "FACT", text = description.trim('.', ' ') + ".",
                 importance = 4, subjectIds = character.id, subjectNames = character.name,
                 keywords = MemoryIndex.keywords(description).joinToString(" "),
-                storyTime = delta.storyTime ?: world.storyTime, turnIndex = turnIndex
+                storyTime = world.storyTime, turnIndex = turnIndex
             )
         }
         if (contactMemories.isNotEmpty()) repo.saveMemories(contactMemories)
@@ -608,9 +701,19 @@ class StateApplier(private val repo: WorldRepository) {
                 subjectIds = subjectIds.joinToString(","),
                 subjectNames = incoming.subjects.joinToString(", "),
                 keywords = MemoryIndex.keywords(incoming.text).joinToString(" "),
-                storyTime = delta.storyTime ?: world.storyTime,
+                storyTime = world.storyTime,
                 turnIndex = turnIndex,
-                pinned = incoming.importance >= 5
+                // Where it came from, and therefore what it is allowed to outrank. Only what
+                // the player wrote and what the world was built on may be pinned; a detail the
+                // narrator invented mid-scene is remembered, not promoted to canon.
+                provenance = when (incoming.kind.uppercase()) {
+                    "CANON" -> "PLAYER_CANON"
+                    "RULE" -> "WORLD_CANON"
+                    "FACT" -> "STATED"
+                    "DISCOVERY" -> "OBSERVED"
+                    else -> "OBSERVED"
+                },
+                pinned = false
             )
         }
         if (memories.isNotEmpty()) repo.saveMemories(memories)
@@ -641,17 +744,93 @@ class StateApplier(private val repo: WorldRepository) {
             visualSubjects += subjectName
         }
 
-        // 11. The clock and the world row itself.
-        val storyTime = delta.storyTime?.trim().orEmpty().ifBlank { world.storyTime }
-        world = world.copy(
-            storyTime = storyTime,
-            dayNumber = parseDay(storyTime) ?: world.dayNumber,
-            timeOfDay = parseTimeOfDay(storyTime) ?: world.timeOfDay,
+        // 11. The clock: one number, moved by the app, derived from nowhere else.
+        //
+        // The narrator no longer writes a time. It says how long the beat took, and the clock
+        // moves by that. Three copies of the time - a string, a day number and a word for the
+        // part of the day - is how a world slept through a night and woke up on the same day.
+        val scene = SceneDirector.readScene(delta)
+        val advance = SceneDirector.minutesFor(scene, kind).toLong()
+        world = WorldClock.applyTo(world, world.clockMinute + advance).copy(
             turnCount = turnIndex + 1,
             updatedAt = System.currentTimeMillis(),
             lastPlayedAt = System.currentTimeMillis()
         )
         repo.saveWorld(world)
+        val nowMinute = world.clockMinute
+
+        // 11b. The calendar. An arrangement without a date on it is one the world cannot keep.
+        val newEvents = delta.events.filter { it.title.isNotBlank() }.mapNotNull { incoming ->
+            val event = Schedule.fromDelta(
+                worldId = worldId,
+                title = incoming.title,
+                description = incoming.description,
+                kind = incoming.kind,
+                whenText = incoming.whenText,
+                durationMinutes = incoming.durationMinutes,
+                locationName = incoming.location,
+                withNames = incoming.withNames,
+                recurrence = incoming.recurrence,
+                forPlayer = incoming.forWhom.isBlank() || incoming.forWhom.equals("player", true),
+                turnIndex = turnIndex,
+                nowMinute = nowMinute,
+                stamp = WorldClock.of(world)
+            )
+            if (event == null) {
+                report.add(
+                    ContinuityGuard.SEVERITY_INFO, "calendar",
+                    "\"${incoming.title}\" was arranged for \"${incoming.whenText}\", which is not a time.",
+                    "Not put in the calendar. Give a day and a time - \"Friday 8 PM\" - so the " +
+                        "world knows when it is."
+                )
+                return@mapNotNull null
+            }
+            val at = WorldClock.stamp(event.startMinute, world)
+            report.add(
+                ContinuityGuard.SEVERITY_INFO, "calendar",
+                "Put in the calendar: ${event.title} on ${at.full}.",
+                "The world now knows when this is, and time can be skipped to it."
+            )
+            event.copy(
+                locationId = findLocation(incoming.location)?.id,
+                status = incoming.status.uppercase().ifBlank { "CONFIRMED" }
+            )
+        }
+        if (newEvents.isNotEmpty()) repo.saveEvents(newEvents)
+
+        // 11c. Clothing, which is state with a time on it rather than a sentence.
+        delta.outfits.filter { it.character.isNotBlank() }.forEach { incoming ->
+            val character = findCharacter(incoming.character) ?: return@forEach
+            var updated = Wardrobe.wearing(character, incoming.wearing, incoming.context, nowMinute)
+            if (incoming.temporary.isNotBlank()) {
+                updated = Wardrobe.withDetail(updated, incoming.temporary, incoming.temporaryHours, nowMinute)
+            }
+            characters[characters.indexOfFirst { it.id == character.id }] = updated
+            repo.saveCharacter(updated)
+            visualSubjects += updated.name
+        }
+        // Glitter does not last four days. Anything whose time is up comes off the record.
+        characters.toList().forEach { character ->
+            val pruned = Wardrobe.pruned(character, nowMinute)
+            if (pruned !== character) {
+                characters[characters.indexOfFirst { it.id == character.id }] = pruned
+                repo.saveCharacter(pruned)
+            }
+        }
+
+        // 11d. One person, one row. A title is not a different human being.
+        EntityResolver.duplicates(characters).take(3).forEach { (keep, duplicate) ->
+            val merged = EntityResolver.merge(keep, duplicate)
+            characters[characters.indexOfFirst { it.id == keep.id }] = merged
+            characters.removeAll { it.id == duplicate.id }
+            repo.saveCharacter(merged)
+            repo.deleteCharacter(duplicate.id)
+            report.add(
+                ContinuityGuard.SEVERITY_INFO, "duplicate",
+                "${duplicate.name} and ${keep.name} were the same person under two names.",
+                "Merged into ${merged.name}, keeping everything either of them knew."
+            )
+        }
 
         // 12. Read the prose back and flag anything the state block failed to mention.
         ContinuityGuard.auditNarration(snapshot, narration, movedNames, characters).forEach {
@@ -747,13 +926,35 @@ class StateApplier(private val repo: WorldRepository) {
         val player = characters.firstOrNull { it.isPlayer }
         val hereId = world.currentLocationId
 
-        // Anyone in the room, or near enough to be heard: seen and heard, nothing more.
-        val inScene = characters.filter {
-            !it.isPlayer && it.status != "DEAD" &&
-                (it.currentLocationId == hereId || snapshot.withinEarshot(it.currentLocationId))
+        // How much of somebody the player actually got.
+        //
+        // In the room and named on the page is a person they have met. In the room but never
+        // named is a face without a name. A voice through a window is a voice through a
+        // window - which is what Jenna was, before this turned her into a full dossier the
+        // moment she shouted about the laundry.
+        val prose = narration.lowercase()
+        fun namedInProse(npc: CharacterEntity): Boolean {
+            val first = npc.name.split(' ').firstOrNull()?.lowercase()?.takeIf { it.length >= 3 }
+                ?: return false
+            return Regex("\\b${Regex.escape(first)}\\b").containsMatchIn(prose)
         }
-        inScene.forEach { npc ->
-            PlayerKnowledge.onMeeting(worldId, npc, turnIndex, storyTime, known(npc.id)).forEach(::add)
+
+        characters.filter { !it.isPlayer && it.status != "DEAD" }.forEach { npc ->
+            val inTheRoom = npc.currentLocationId == hereId
+            val nearby = !inTheRoom && snapshot.withinEarshot(npc.currentLocationId)
+            when {
+                inTheRoom -> PlayerKnowledge.onMeeting(
+                    worldId, npc, turnIndex, storyTime, known(npc.id), named = namedInProse(npc)
+                ).forEach(::add)
+                nearby && namedInProse(npc) -> PlayerKnowledge.onMeeting(
+                    worldId, npc, turnIndex, storyTime, known(npc.id), named = true
+                ).forEach(::add)
+                nearby -> PlayerKnowledge.onHearing(
+                    worldId, npc,
+                    descriptor = "a voice from ${snapshot.locationName(npc.currentLocationId)}",
+                    turnIndex, storyTime, known(npc.id)
+                ).forEach(::add)
+            }
         }
 
         // Where they are standing, and everything that contains it: you can see the street
@@ -802,6 +1003,13 @@ class StateApplier(private val repo: WorldRepository) {
         // A number that changed hands is something they know they have.
         delta.contacts.filter { it.established && it.character.isNotBlank() }.forEach { incoming ->
             val npc = repo.resolveCharacter(characters, incoming.character) ?: return@forEach
+            // Writing to somebody is knowing their name, not knowing their face.
+            if (npc.currentLocationId != hereId) {
+                PlayerKnowledge.onRemoteContact(
+                    worldId, npc, incoming.note.ifBlank { "a message" },
+                    turnIndex, storyTime, known(npc.id)
+                ).forEach(::add)
+            }
             add(
                 PlayerKnowledge.row(
                     worldId, PlayerKnowledge.CHARACTER, npc.id, npc.name, PlayerKnowledge.CONTACT,

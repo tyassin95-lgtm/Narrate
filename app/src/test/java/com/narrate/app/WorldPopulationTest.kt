@@ -181,12 +181,17 @@ class WorldPopulationTest {
             )
         )
 
-        val onMap = repo.locationDao.all(world.id).filter { it.discovered }.map { it.name }
+        val onMap = repo.locationDao.all(world.id).filter { it.discovered }.map { it.name }.sorted()
         assertEquals(
-            "only where the story opens, and what contains it",
-            listOf("Maple Street"),
+            "where the story opens, and the flat they have lived in all along",
+            listOf("Adrian's Apartment", "Maple Street"),
             onMap
         )
+        // Somewhere to live, from turn one, rather than invented on turn twenty-four.
+        val player = repo.characterDao.player(world.id)!!
+        val home = repo.locationDao.all(world.id).first { it.id == player.homeLocationId }
+        assertEquals("Adrian's Apartment", home.name)
+        assertTrue("and it is not the pavement they are standing on", home.id != world.currentLocationId)
         assertTrue(
             "the rest of the city still exists, so people have somewhere to be",
             repo.locationDao.all(world.id).size >= 4

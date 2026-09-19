@@ -215,6 +215,59 @@ data class RevealDelta(
     val from: String = ""
 )
 
+/**
+ * What the narrator did with the beat: how far it got, how long it took, why it stopped.
+ *
+ * The clock moves by [minutes] and by nothing else. The narrator no longer writes a time at
+ * all - it reports a duration, and the app does the arithmetic, which is the only arrangement
+ * in which the two can never disagree.
+ */
+@Serializable
+data class SceneDelta(
+    /** CONTINUING while the player is still in the scene; RESOLVED once it is finished. */
+    val status: String = "CONTINUING",
+    /** How long this beat took on the world clock. */
+    val minutes: Int = 0,
+    @SerialName("ended_because") val endedBecause: String = ""
+)
+
+/** Something that is going to happen, with a day and a time rather than a word like "Friday". */
+@Serializable
+data class EventDelta(
+    val title: String = "",
+    val description: String = "",
+    /** SHIFT, CLASS, MEETING, APPOINTMENT, DEADLINE, PLAN. */
+    val kind: String = "PLAN",
+    /** When, in the words people arrange things in: "Friday 8 PM", "tomorrow morning". */
+    @SerialName("when") val whenText: String = "",
+    @SerialName("duration_minutes") val durationMinutes: Int = 60,
+    val location: String = "",
+    @SerialName("with") val withNames: String = "",
+    /** Blank for a one-off, or "WEEKLY:MON,WED" / "DAILY" for something that repeats. */
+    val recurrence: String = "",
+    /** "player" for the player's own commitment, otherwise whose it is. */
+    @SerialName("for") val forWhom: String = "player",
+    /** CONFIRMED, TENTATIVE, CANCELLED, DONE, MISSED. */
+    val status: String = "CONFIRMED"
+)
+
+/**
+ * What somebody is wearing now, and for how long the temporary parts of it last.
+ *
+ * Clothing was a sentence with no time attached, so a party dress and glitter on one cheek
+ * were still being described four days later.
+ */
+@Serializable
+data class OutfitDelta(
+    val character: String = "",
+    val wearing: String = "",
+    /** PARTY, WORK, CLASS, HOME, SLEEP, GOING_OUT, OUTDOORS, CASUAL. */
+    val context: String = "CASUAL",
+    /** Glitter, makeup, wet hair, a hand stamp: true now, not true tomorrow. */
+    val temporary: String = "",
+    @SerialName("temporary_hours") val temporaryHours: Int = 8
+)
+
 @Serializable
 data class StateDelta(
     @SerialName("story_time") val storyTime: String? = null,
@@ -237,6 +290,12 @@ data class StateDelta(
     val contacts: List<ContactDelta> = emptyList(),
     /** What the player's character learned this turn, and how. */
     val revealed: List<RevealDelta> = emptyList(),
+    /** How far this beat got, how long it took, and why it stopped there. */
+    val scene: SceneDelta? = null,
+    /** Anything arranged, scheduled or due. */
+    val events: List<EventDelta> = emptyList(),
+    /** Who changed what they are wearing, and into what. */
+    val outfits: List<OutfitDelta> = emptyList(),
     @SerialName("image_suggestion") val imageSuggestion: String? = null,
     /** Some models put the choices in the state block instead. Accepted rather than lost. */
     val choices: List<String> = emptyList()
@@ -270,8 +329,17 @@ data class ParsedTurn(
      */
     val hasNarration: Boolean = true
 ) {
-    /** A turn is only complete when the player has something to do and the world was updated. */
-    val isComplete: Boolean get() = choices.isNotEmpty() && stateParsed && !looksUnfinished
+    /**
+     * A turn is complete when the world was updated and the reply is not cut off.
+     *
+     * Having something to do is no longer part of it. A scene that has resolved - they got
+     * home, they said goodnight, the shift ended - offers nothing to choose, and asking the
+     * narrator for options anyway is what filled menus with sitting down and checking the
+     * time. What it may not do is end mid-sentence or forget the state block.
+     */
+    val isComplete: Boolean
+        get() = stateParsed && !looksUnfinished &&
+            (choices.isNotEmpty() || delta.scene?.status?.uppercase() == "RESOLVED")
 }
 
 /**
@@ -327,9 +395,16 @@ object TurnParser {
         }.trim()
 
         val choicesBlock = choicesSection?.let { section ->
+            // A section header consumes the newline before it, so the next header can begin
+            // one character *before* this one's content does. Comparing against the content
+            // start therefore missed it entirely when a section was empty - and an empty
+            // choices section is now a legitimate turn, so the whole state block was being
+            // read back as a list of options.
             val to = listOfNotNull(stateSection?.start, endSection?.start)
-                .filter { it > section.contentStart }
-                .minOrNull() ?: text.length
+                .filter { it >= section.start }
+                .minOrNull()
+                ?.coerceAtLeast(section.contentStart)
+                ?: text.length
             text.substring(section.contentStart, to)
         }.orEmpty()
 

@@ -45,7 +45,24 @@ class TurnDirector(
     suspend fun take(worldId: String, input: String, kind: String): Result<TurnResult> =
         run(worldId, input, kind)
 
-    private suspend fun run(worldId: String, input: String, kind: String): Result<TurnResult> = runCatching {
+    /**
+     * One of the time controls, with the moment it lands on.
+     *
+     * The option carries the target, so the turn cannot quietly do nothing: the clock is put
+     * where the button said it would go whatever the narrator writes.
+     */
+    suspend fun takeTimeControl(
+        worldId: String,
+        kind: String,
+        option: WorldActions.TimeOption?
+    ): Result<TurnResult> = run(worldId, "", kind, option)
+
+    private suspend fun run(
+        worldId: String,
+        input: String,
+        kind: String,
+        timeOption: WorldActions.TimeOption? = null
+    ): Result<TurnResult> = runCatching {
         val config = settings.current
         val choice = config.narration
         if (!choice.isSet) {
@@ -57,7 +74,12 @@ class TurnDirector(
 
         val system = Prompts.gameMaster(snapshot.world)
         val history = conversationHistory(snapshot)
-        val context = buildContext(snapshot, input, kind, turnIndex)
+        val playerInput = if (WorldActions.isWorldAction(kind) && input.isBlank()) {
+            WorldActions.playerInput(kind, snapshot, timeOption)
+        } else {
+            input
+        }
+        val context = buildContext(snapshot, playerInput, kind, turnIndex, timeOption)
         val messages = history + ChatMessage.user(context)
         val promptCharacters = system.length + messages.sumOf { it.content.length }
 
@@ -118,7 +140,7 @@ class TurnDirector(
 
         // A turn that arrived without choices or without a state block is not finished. Rather
         // than papering over it in the UI, ask the model to complete what it started.
-        if (!parsed.isComplete || parsed.choices.size < MIN_CHOICES) {
+        if (!parsed.isComplete) {
             val completion = complete(
                 worldId = worldId,
                 turnIndex = turnIndex,
@@ -164,51 +186,18 @@ class TurnDirector(
         } else {
             parsed.delta
         }
-        var applied = applier.apply(snapshot, delta, turnIndex, parsed.narration)
+        var applied = applier.apply(snapshot, delta, turnIndex, parsed.narration, kind)
 
-        // A time control is a promise that time passes. When the narrator moves the clock four
-        // minutes for a skipped hour or an entire night's sleep, the app moves it the rest of
-        // the way rather than asking the player to press the button again.
+        // A time control names the moment it lands on, and the app puts the clock there.
+        // Before this the narrator was asked to advance time and then checked afterwards,
+        // which produced a "skip" that moved the world forward by one minute.
         if (WorldActions.isWorldAction(kind)) {
-            val required = WorldActions.minimumMinutes(kind, snapshot)
-            val moved = StoryClock.elapsed(snapshot.world.storyTime, applied.world.storyTime)
-            if (required > 0 && (moved == null || moved < required)) {
-                val corrected = StoryClock.advance(snapshot.world.storyTime, required)
-                if (corrected != snapshot.world.storyTime) {
-                    val world = applied.world.copy(
-                        storyTime = corrected,
-                        dayNumber = Regex("day\\s+(\\d+)", RegexOption.IGNORE_CASE)
-                            .find(corrected)?.groupValues?.get(1)?.toIntOrNull() ?: applied.world.dayNumber
-                    )
-                    repo.saveWorld(world)
-                    applied = applied.copy(world = world)
-                    repo.saveIssues(
-                        ContinuityGuard.Report().apply {
-                            add(
-                                ContinuityGuard.SEVERITY_INFO,
-                                "clock",
-                                "The player skipped ahead, but the turn only moved the clock " +
-                                    "${moved ?: 0} minutes.",
-                                "Advanced to \"$corrected\". A time control moves time by " +
-                                    "hours, not minutes."
-                            )
-                        }.toEntities(worldId, turnIndex)
-                    )
-                }
+            val target = WorldActions.targetMinute(kind, snapshot, timeOption)
+            if (applied.world.clockMinute != target) {
+                val world = WorldClock.applyTo(applied.world, target)
+                repo.saveWorld(world)
+                applied = applied.copy(world = world)
             }
-        }
-
-        if (!parsed.stateParsed && parsed.narration.isNotBlank()) {
-            repo.saveIssues(
-                ContinuityGuard.Report().apply {
-                    add(
-                        ContinuityGuard.SEVERITY_WARNING,
-                        "state-block",
-                        "The narrator returned prose but no readable state update for turn $turnIndex.",
-                        "The narration was kept; world state was left unchanged for this turn."
-                    )
-                }.toEntities(worldId, turnIndex)
-            )
         }
 
         // A turn that ended by asking the player his own name left the character mute. The
@@ -232,40 +221,24 @@ class TurnDirector(
             )
         }
 
-        // Time does not run backwards inside a day, whatever shape the provider writes it in.
-        val previousTime = snapshot.recentTurns.lastOrNull()?.storyTime ?: snapshot.world.storyTime
-        if (StoryClock.wentBackwards(previousTime, applied.world.storyTime)) {
-            repo.saveIssues(
-                ContinuityGuard.Report().apply {
-                    add(
-                        ContinuityGuard.SEVERITY_WARNING,
-                        "clock",
-                        "The story clock went backwards: \"$previousTime\" to " +
-                            "\"${applied.world.storyTime}\".",
-                        "Time only moves forward within a day. Carry on from the later time, or " +
-                            "say plainly that a new day has started."
-                    )
-                }.toEntities(worldId, turnIndex)
-            )
-        }
-
-        // Prose that states an interval is making a claim about the clock. "Twenty minutes
-        // later" while story_time moves four minutes is the arithmetic error the player kept
-        // reading as the world losing track of its own afternoon.
+        // The clock is the app's now, so it cannot run backwards or stand still. What can
+        // still go wrong is the prose disagreeing with it, and that is worth catching: a turn
+        // that says "twenty minutes later" while the beat was three minutes long has told the
+        // player something the world does not believe.
+        val moved = applied.world.clockMinute - snapshot.world.clockMinute
         val claimed = StoryClock.statedElapsed(parsed.narration)
-        val actual = StoryClock.elapsed(previousTime, applied.world.storyTime)
-        if (claimed != null && actual != null && actual >= 0) {
-            val slack = maxOf(5, claimed / 2)
-            if (kotlin.math.abs(actual - claimed) > slack) {
+        if (claimed != null && moved >= 0) {
+            val slack = maxOf(10, claimed / 2)
+            if (kotlin.math.abs(moved - claimed) > slack) {
                 repo.saveIssues(
                     ContinuityGuard.Report().apply {
                         add(
                             ContinuityGuard.SEVERITY_WARNING,
                             "clock",
-                            "The narration says about $claimed minutes went by, but story_time " +
-                                "moved $actual: \"$previousTime\" to \"${applied.world.storyTime}\".",
-                            "The clock is what the world runs on. When the prose says how long " +
-                                "something took, story_time moves by that much."
+                            "The narration says about $claimed minutes went by; the beat was " +
+                                "recorded as $moved.",
+                            "The clock moved by what \"scene\".\"minutes\" said. Put the real " +
+                                "length of the beat there and the prose will match it."
                         )
                     }.toEntities(worldId, turnIndex)
                 )
@@ -273,34 +246,40 @@ class TurnDirector(
         }
 
         // Four in the morning does not have sunlight in it, whatever the sentence wanted.
-        StoryClock.lightContradiction(applied.world.storyTime, parsed.narration)?.let { phrase ->
+        val landed = WorldClock.of(applied.world)
+        val lightWrong = when {
+            landed.minuteOfDay < 4 * 60 ->
+                Regex("\\b(sunlight|sunshine|broad daylight|morning light)\\b", RegexOption.IGNORE_CASE)
+                    .find(parsed.narration)?.value
+            landed.minuteOfDay in 10 * 60 until 15 * 60 ->
+                Regex("\\b(pitch dark|moonlight|starlight|middle of the night)\\b", RegexOption.IGNORE_CASE)
+                    .find(parsed.narration)?.value
+            else -> null
+        }
+        lightWrong?.let { phrase ->
             repo.saveIssues(
                 ContinuityGuard.Report().apply {
                     add(
                         ContinuityGuard.SEVERITY_WARNING,
                         "clock",
-                        "The narration describes \"$phrase\" at ${applied.world.storyTime}.",
-                        "Light, dark and the look of the sky follow story_time. Check the hour " +
-                            "before describing the sky."
+                        "The narration describes \"$phrase\" at ${landed.full}.",
+                        "Light and dark follow the world clock, which is given to you at the " +
+                            "top of every turn."
                     )
                 }.toEntities(worldId, turnIndex)
             )
         }
 
-        // A world where three turns in a row happen at the same "early morning" has stopped
-        // keeping time, and every routine, shift and opening hour depends on it.
-        val stalled = snapshot.recentTurns.takeLast(2)
-            .all { it.storyTime.isNotBlank() && it.storyTime == applied.world.storyTime }
-        if (stalled && snapshot.recentTurns.size >= 2) {
+        // A beat that covered no time at all is the old failure in its purest form.
+        if (moved == 0L && turnIndex > 0 && !WorldActions.isWorldAction(kind)) {
             repo.saveIssues(
                 ContinuityGuard.Report().apply {
                     add(
                         ContinuityGuard.SEVERITY_WARNING,
                         "clock",
-                        "The story clock has read \"${applied.world.storyTime}\" for three turns " +
-                            "running, though time has plainly passed.",
-                        "Advance story_time by however long each turn takes, with an actual time " +
-                            "of day when a scene runs continuously."
+                        "The turn recorded no elapsed time at all.",
+                        "Every beat takes some time. Put its real length in " +
+                            "\"scene\".\"minutes\" - a conversation is ten or twenty."
                     )
                 }.toEntities(worldId, turnIndex)
             )
@@ -311,11 +290,11 @@ class TurnDirector(
             worldId = worldId,
             index = turnIndex,
             inputType = kind,
-            playerInput = input,
+            playerInput = playerInput,
             narration = parsed.narration,
             summary = parsed.delta.summary?.trim().orEmpty().ifBlank { parsed.narration.truncate(220) },
             choicesJson = AppJson.encodeToString(ListSerializer(Choice.serializer()), parsed.choices),
-            storyTime = applied.world.storyTime,
+            storyTime = WorldClock.of(applied.world).full,
             locationId = applied.world.currentLocationId,
             locationName = applied.currentLocationName
                 .ifBlank { snapshot.locationName(applied.world.currentLocationId) },
@@ -450,7 +429,8 @@ class TurnDirector(
         snapshot: WorldSnapshot,
         input: String,
         kind: String,
-        turnIndex: Int
+        turnIndex: Int,
+        timeOption: WorldActions.TimeOption? = null
     ): String = buildString {
         appendLine(WorldDigest.worldBible(snapshot))
         appendLine()
@@ -486,6 +466,21 @@ class TurnDirector(
             }
         }
 
+        Schedule.render(snapshot).takeIf { it.isNotBlank() }?.let {
+            appendLine()
+            append(it)
+        }
+
+        Wardrobe.render(snapshot.characters, snapshot.world.clockMinute).takeIf { it.isNotBlank() }?.let {
+            appendLine()
+            append(it)
+        }
+
+        if (!WorldActions.isWorldAction(kind)) {
+            appendLine()
+            append(SceneDirector.render(snapshot))
+        }
+
         PlayerKnowledge.render(snapshot).takeIf { it.isNotBlank() }?.let {
             appendLine()
             append(it)
@@ -515,7 +510,7 @@ class TurnDirector(
                 appendLine(Prompts.playerInputInstruction(input, kind))
             }
         } else if (WorldActions.isWorldAction(kind)) {
-            appendLine(WorldActions.instruction(kind, snapshot))
+            appendLine(WorldActions.instruction(kind, snapshot, timeOption))
         } else {
             appendLine(Prompts.playerInputInstruction(input, kind))
         }
@@ -561,9 +556,11 @@ class TurnDirector(
             ProviderRegistry.get(choice.provider).chat(
                 LlmRequest(
                     model = choice.model,
-                    system = "You are the archivist of a persistent fictional world. You write dense, factual " +
-                        "chapter summaries that preserve every consequence, promise, relationship change, " +
-                        "discovery and movement. You never invent anything that is not in the transcript.",
+                    system = "You are the archivist of a persistent fictional world. You write the " +
+                        "chapter of the story these turns amount to: what happened that will still " +
+                        "matter, in the voice of a record rather than a retelling. You never invent " +
+                        "anything that is not in the transcript, and you never list actions that " +
+                        "changed nothing.",
                     messages = listOf(
                         ChatMessage.user(
                             """
@@ -571,10 +568,16 @@ class TurnDirector(
 
                             Requirements:
                             - Open with a short evocative chapter title on its own first line.
-                            - Then 200-400 words of dense prose in past tense.
-                            - Preserve: what the player did and decided, who they met, what was promised or
-                              threatened, what was learned, what changed in the world, where everyone ended up,
-                              and any consequence still outstanding.
+                            - Then 150-300 words of prose in past tense, about what actually happened.
+                            - Keep: decisions, discoveries, what was promised or arranged and when, who
+                              was met and what they turned out to be, how a relationship moved, what
+                              changed hands, where everybody ended up, and anything still outstanding.
+                            - Cut everything else. Do not write that somebody stood still, said
+                              nothing, kept walking, or that nothing was agreed - a chapter that says
+                              "no promises were exchanged and no threats were issued" is a chapter
+                              that should have been three sentences long.
+                            - Never write a list of small physical actions. "He checked the time, sat
+                              down and drank his coffee" is not a record of anything.
                             - Omit atmosphere and description. This is a record, not a retelling.
 
                             TRANSCRIPT:
@@ -620,7 +623,14 @@ class TurnDirector(
         /** Below this a chapter is too thin to be worth a call; above it the journal keeps up. */
         const val MIN_CHAPTER_SIZE = 3
         /** Fewer than this is not a menu, and is worth a second call to put right. */
-        const val MIN_CHOICES = 2
+        /**
+         * The floor for asking again, which is now one.
+         *
+         * Four suggestions was a UI requirement pretending to be a gameplay rule, and it was
+         * met by inventing chores. A moment with one real decision in it gets one option; a
+         * moment with none gets none, and the scene carries on.
+         */
+        const val MIN_CHOICES = 1
         /** Enough for choices and a state block, not enough to pay for a second narration. */
         const val REPAIR_TOKENS = 3500
         /** The tail of the first reply is all the model needs to pick up where it stopped. */

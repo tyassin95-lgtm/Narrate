@@ -27,6 +27,7 @@ data class PlayUiState(
     val locations: List<LocationEntity> = emptyList(),
     val images: List<ImageEntity> = emptyList(),
     val threads: List<ThreadEntity> = emptyList(),
+    val events: List<EventEntity> = emptyList(),
     val loading: Boolean = false,
     val generatingImage: Boolean = false,
     val error: String? = null,
@@ -50,6 +51,40 @@ data class PlayUiState(
     /** Whether "go home" is worth offering: it is not, when they are already standing in it. */
     val canGoHome: Boolean
         get() = player?.homeLocationId != null && player.homeLocationId != world?.currentLocationId
+
+    /** What the world is, as the engine sees it, so the time controls can be built from it. */
+    fun asSnapshot(): com.narrate.app.data.repo.WorldSnapshot? {
+        val world = world ?: return null
+        return com.narrate.app.data.repo.WorldSnapshot(
+            world = world,
+            player = player,
+            characters = characters,
+            locations = locations,
+            links = emptyList(),
+            items = emptyList(),
+            factions = emptyList(),
+            relationships = emptyList(),
+            threads = threads,
+            chapters = emptyList(),
+            recentTurns = turns.takeLast(4),
+            memories = emptyList(),
+            visualIdentities = emptyList(),
+            events = events
+        )
+    }
+
+    /**
+     * The ways of moving time that make sense from here.
+     *
+     * Generated from the calendar rather than fixed, so "until his shift ends" and "to Friday
+     * 8 PM - meet Liv" are offered when they exist and plain hours when they do not.
+     */
+    val timeOptions: List<WorldActions.TimeOption>
+        get() = asSnapshot()?.let { WorldActions.options(it) }.orEmpty()
+
+    /** The clock, as a person would read it. */
+    val clock: String
+        get() = world?.let { com.narrate.app.engine.WorldClock.of(it).full }.orEmpty()
 }
 
 /** Drives one world's play session: the feed, the turn loop, and on-demand imagery. */
@@ -82,6 +117,8 @@ class PlayViewModel(application: Application, private val worldId: String) : And
             images = images,
             threads = threads
         )
+    }.combine(repo.observeEvents(worldId)) { data, events ->
+        data.copy(events = events)
     }.combine(_transient) { data, transient ->
         data.copy(
             loading = transient.loading,
@@ -119,13 +156,11 @@ class PlayViewModel(application: Application, private val worldId: String) : And
      * The turn still goes through the narrator - the world has to run while the time passes -
      * but the player never has to pick "wait a little longer" off a menu again.
      */
-    fun worldAction(kind: String) {
+    fun worldAction(kind: String, option: WorldActions.TimeOption? = null) {
         viewModelScope.launch {
             val snapshot = repo.snapshot(worldId) ?: return@launch
             if (!WorldActions.available(kind, snapshot)) return@launch
-            runTurn {
-                container.turnDirector.take(worldId, WorldActions.playerInput(kind, snapshot), kind)
-            }
+            runTurn { container.turnDirector.takeTimeControl(worldId, kind, option) }
         }
     }
 

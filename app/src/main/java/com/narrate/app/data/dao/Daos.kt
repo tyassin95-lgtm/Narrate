@@ -76,6 +76,19 @@ interface ItemDao {
 }
 
 @Dao
+interface EventDao {
+    @Upsert suspend fun upsert(event: EventEntity)
+    @Upsert suspend fun upsertAll(events: List<EventEntity>)
+    @Query("SELECT * FROM events WHERE worldId = :worldId ORDER BY startMinute ASC")
+    fun observeAll(worldId: String): Flow<List<EventEntity>>
+    @Query("SELECT * FROM events WHERE worldId = :worldId ORDER BY startMinute ASC")
+    suspend fun all(worldId: String): List<EventEntity>
+    @Query("DELETE FROM events WHERE worldId = :worldId AND createdTurn >= :from")
+    suspend fun deleteFrom(worldId: String, from: Int)
+    @Query("DELETE FROM events WHERE worldId = :worldId") suspend fun deleteByWorld(worldId: String)
+}
+
+@Dao
 interface KnowledgeDao {
     @Upsert suspend fun upsert(row: KnowledgeEntity)
     @Upsert suspend fun upsertAll(rows: List<KnowledgeEntity>)

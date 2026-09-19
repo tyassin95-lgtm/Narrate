@@ -40,6 +40,10 @@ private data class WorldBuild(
     val threads: List<ThreadDelta> = emptyList(),
     @SerialName("starting_location") val startingLocation: String = "",
     @SerialName("starting_time") val startingTime: String = "Day 1, morning",
+    /** Where the protagonist lives. Not the same place as where the story opens. */
+    @SerialName("player_home") val playerHome: String = "",
+    /** The shape of the protagonist's week: shifts, classes, standing arrangements. */
+    val schedule: List<EventDelta> = emptyList(),
     @SerialName("established_facts") val establishedFacts: List<MemoryDelta> = emptyList()
 )
 
@@ -481,6 +485,13 @@ class WorldForge(
                     - 3-5 threads already in motion before the player's first turn, each with a next beat
                       that will happen whether or not the player engages.
                       ${playStyle.buildGuidance}
+                    - Somewhere the protagonist lives, named in "player_home", and on a real street
+                      with a number if this setting has streets. They have lived there for a while.
+                    - The shape of the protagonist's week in "schedule": the shifts, classes or
+                      standing commitments their life already has, with days and times. This is a
+                      calendar, so "Fridays off" is expressed as the days they DO work.
+                    - Streets. A town is made of them: name the roads that its buildings stand on
+                      and give the buildings numbers on those roads, so the map is a map.
                     - 5-10 established facts that must never be contradicted.
 
                     Reply with one JSON object:
@@ -488,6 +499,12 @@ class WorldForge(
                       "starting_location": "exact name of a location you defined, where the first scene opens",
                       the opening must match the requested pacing above,
                       "starting_time": "Day 1, morning",
+                      "player_home": "the exact name of the location the protagonist lives in - a real
+                        place in your list, with a street address if the setting has streets. They
+                        live somewhere from the first turn, even if the story opens elsewhere",
+                      "schedule": [{"title":"ER shift","kind":"SHIFT|CLASS|APPOINTMENT|DEADLINE|MEETING",
+                        "when":"Monday 8 AM","duration_minutes":720,"location":"","with":"",
+                        "recurrence":"WEEKLY:MON,TUE,WED,THU","for":"player"}],
                       "locations": [{"name":"","type":"REGION|SETTLEMENT|DISTRICT|BUILDING|ROOM|LANDMARK|WILDERNESS",
                         "parent":"containing location name or empty","description":"","atmosphere":"",
                         "notable_features":"","connects_to":["other location names"],"travel_time":"","controlled_by":""}],
@@ -507,7 +524,11 @@ class WorldForge(
             val json = TurnParser.salvageJsonObject(raw)
                 ?: throw IllegalStateException("The world builder returned no readable JSON.")
             val build = AppJson.decodeFromString(WorldBuild.serializer(), json)
-            WorldBuildOutcome(concept, build.locations, build.characters, build.factions, build.threads, build.startingLocation, build.startingTime, build.establishedFacts)
+            WorldBuildOutcome(
+                concept, build.locations, build.characters, build.factions, build.threads,
+                build.startingLocation, build.startingTime, build.establishedFacts,
+                build.playerHome, build.schedule
+            )
         }
 
     data class WorldBuildOutcome(
@@ -518,7 +539,11 @@ class WorldForge(
         val threads: List<ThreadDelta>,
         val startingLocation: String,
         val startingTime: String,
-        val facts: List<MemoryDelta>
+        val facts: List<MemoryDelta>,
+        /** Where the protagonist lives, which the world must know from turn one. */
+        val playerHome: String = "",
+        /** Their week, as calendar records rather than as a sentence in a biography. */
+        val schedule: List<EventDelta> = emptyList()
     )
 
     /**
@@ -558,7 +583,7 @@ class WorldForge(
         // Last line of defence: whatever the model returned, the player's own names win.
         val enforcedWorld = AuthoredCanon.enforceWorld(customPrompt, concept).first
         val enforcedCharacter = AuthoredCanon.enforceCharacter(characterPrompt, character).first
-        val world = WorldEntity(
+        var world = WorldEntity(
             id = worldId,
             name = enforcedWorld.name.ifBlank { AuthoredCanon.worldName(customPrompt) ?: "Untitled World" },
             tagline = enforcedWorld.tagline,
@@ -574,8 +599,15 @@ class WorldForge(
             playStyle = playStyle.id,
             contentGuidelines = contentGuidelines,
             artStyle = enforcedWorld.artStyle.ifBlank { "Cinematic, film still, natural lighting, high detail" },
-            storyTime = build?.startingTime?.ifBlank { "Day 1, morning" } ?: "Day 1, morning",
             openingNarration = enforcedWorld.openingSituation
+        )
+        // The world starts on a real date at a real hour, so that "Friday" is somewhere the
+        // calendar can point to rather than a word in a sentence.
+        val openingText = listOf(enforcedWorld.openingSituation, build?.startingTime.orEmpty())
+            .joinToString(" ")
+        world = WorldClock.applyTo(
+            world.copy(calendarEpoch = WorldClock.startingEpoch(openingText).toString()),
+            startingMinuteOf(build?.startingTime, enforcedWorld.openingSituation)
         )
         repo.saveWorld(world)
 
@@ -666,6 +698,22 @@ class WorldForge(
         val playerName = enforcedCharacter.name
             .ifBlank { AuthoredCanon.characterName(characterPrompt).orEmpty() }
             .ifBlank { "The Traveller" }
+        // Somewhere to live, from turn one.
+        //
+        // The last playthrough had the protagonist's flat come into existence on turn 24,
+        // because he had been given the pavement he was standing on as his home address. A
+        // person has somewhere they live before the story starts, the map should show it, and
+        // "go home" needs somewhere to go.
+        val homeId = ensurePlayerHome(
+            worldId = worldId,
+            playerName = playerName,
+            declared = build?.playerHome,
+            startId = startId,
+            locations = withParents.toMutableList().also { list ->
+                // Anything added here is saved by ensurePlayerHome itself.
+            }
+        )
+
         val playerCharacter = CharacterEntity(
             id = newId(),
             worldId = worldId,
@@ -683,7 +731,7 @@ class WorldForge(
             secrets = enforcedCharacter.secrets,
             authoredCanon = characterPrompt,
             currentLocationId = startId,
-            homeLocationId = startId,
+            homeLocationId = homeId ?: startId,
             importance = 5
         )
         repo.saveCharacter(playerCharacter)
@@ -846,6 +894,7 @@ class WorldForge(
                 // what the player wrote and what the story actually established: "Eastgate
                 // formed in the 1980s from university expansion" is colour, and it was
                 // outranking the world's real history because a model rated it a five.
+                provenance = "SPECULATIVE",
                 pinned = false
             )
         }
@@ -855,7 +904,8 @@ class WorldForge(
                 id = newId(), worldId = worldId, kind = "CANON",
                 text = "The player wrote this world themselves, and it is fact: $customPrompt",
                 importance = 5, keywords = MemoryIndex.keywords(customPrompt).joinToString(" "),
-                storyTime = world.storyTime, turnIndex = 0, pinned = true
+                storyTime = world.storyTime, turnIndex = 0,
+                provenance = "PLAYER_CANON", pinned = true
             )
         }
         if (enforcedWorld.openingSituation.isNotBlank()) {
@@ -864,7 +914,8 @@ class WorldForge(
                 text = "This world opened on: ${enforcedWorld.openingSituation}",
                 importance = 5,
                 keywords = MemoryIndex.keywords(enforcedWorld.openingSituation).joinToString(" "),
-                storyTime = world.storyTime, turnIndex = 0, pinned = true
+                storyTime = world.storyTime, turnIndex = 0,
+                provenance = "PLAYER_CANON", pinned = true
             )
         }
         if (playStyle.quietWorld) {
@@ -874,7 +925,8 @@ class WorldForge(
                     "events emerge from their actions and the ordinary life of the place, " +
                     "and the world does not manufacture drama to hold their attention.",
                 importance = 5, keywords = "pacing tone sandbox quiet",
-                storyTime = world.storyTime, turnIndex = 0, pinned = true
+                storyTime = world.storyTime, turnIndex = 0,
+                provenance = "WORLD_CANON", pinned = true
             )
         }
         if (characterPrompt.isNotBlank()) {
@@ -882,7 +934,8 @@ class WorldForge(
                 id = newId(), worldId = worldId, kind = "CANON",
                 text = "The player wrote their own character, and it is fact: $characterPrompt",
                 importance = 5, keywords = MemoryIndex.keywords(characterPrompt).joinToString(" "),
-                storyTime = world.storyTime, turnIndex = 0, pinned = true
+                storyTime = world.storyTime, turnIndex = 0,
+                provenance = "PLAYER_CANON", pinned = true
             )
         }
         if (facts.isNotEmpty()) repo.saveMemories(facts)
@@ -894,6 +947,30 @@ class WorldForge(
         // contains it, the people the opening scene actually puts in front of them, their own
         // home, and what is in their pockets. The rest of the city, and everybody in it, they
         // will have to find out about.
+        // The protagonist's week goes in the calendar, so time can be skipped to it and the
+        // world knows which evenings they are free.
+        val schedule = build?.schedule.orEmpty().filter { it.title.isNotBlank() }.mapNotNull { incoming ->
+            Schedule.fromDelta(
+                worldId = worldId,
+                title = incoming.title,
+                description = incoming.description,
+                kind = incoming.kind,
+                whenText = incoming.whenText,
+                durationMinutes = incoming.durationMinutes,
+                locationName = incoming.location,
+                withNames = incoming.withNames,
+                recurrence = incoming.recurrence,
+                forPlayer = incoming.forWhom.isBlank() || incoming.forWhom.equals("player", true),
+                turnIndex = 0,
+                nowMinute = world.clockMinute,
+                stamp = WorldClock.of(world)
+            )?.copy(
+                locationId = PlaceIdentity.match(incoming.location, mapped) { it.name }?.id,
+                status = "CONFIRMED"
+            )
+        }
+        if (schedule.isNotEmpty()) repo.saveEvents(schedule)
+
         seedKnowledge(
             worldId = worldId,
             world = world,
@@ -907,6 +984,57 @@ class WorldForge(
         val finished = world.copy(playerCharacterId = playerCharacter.id, currentLocationId = startId)
         repo.saveWorld(finished)
         return finished
+    }
+
+    /**
+     * Where the protagonist lives, found or made.
+     *
+     * The builder is asked for it, and usually gives one. When it does not - or names
+     * somewhere that does not exist - a home is created rather than deferred, because
+     * "somewhere he lives" is not a detail to be improvised on turn twenty-four: it is where
+     * Go Home goes, where he sleeps, and the first pin on his own map.
+     */
+    private suspend fun ensurePlayerHome(
+        worldId: String,
+        playerName: String,
+        declared: String?,
+        startId: String?,
+        locations: MutableList<LocationEntity>
+    ): String? {
+        PlaceIdentity.match(declared, locations) { it.name }?.let { return it.id }
+
+        // Anything already named after them counts: "Adrian's Apartment" is his apartment.
+        val firstName = playerName.split(' ').firstOrNull()?.takeIf { it.length >= 3 }
+        if (firstName != null) {
+            locations.firstOrNull { it.name.contains("$firstName's", true) }?.let { return it.id }
+        }
+
+        val start = locations.firstOrNull { it.id == startId }
+        val district = generateSequence(start) { child ->
+            child.parentId?.let { id -> locations.firstOrNull { it.id == id } }
+        }.firstOrNull { it.type == "DISTRICT" }
+            ?: locations.firstOrNull { it.type == "DISTRICT" }
+            ?: locations.firstOrNull { it.type == "SETTLEMENT" }
+
+        val name = declared?.trim().takeUnless { it.isNullOrBlank() }
+            ?: "${firstName ?: playerName}'s Apartment"
+        val (x, y) = Geography.looseNear(district?.name, name, locations)
+        val home = LocationEntity(
+            id = newId(),
+            worldId = worldId,
+            name = name,
+            type = "BUILDING",
+            parentId = district?.id,
+            description = "Where ${playerName} lives.",
+            discovered = true,
+            visited = true,
+            mapX = x,
+            mapY = y,
+            addressNumber = Geography.addressNumberIn(name) ?: 0
+        )
+        locations += home
+        repo.saveLocation(home)
+        return home.id
     }
 
     /**
@@ -947,11 +1075,18 @@ class WorldForge(
             current = current.parentId?.let { id -> locations.firstOrNull { it.id == id } }
             depth++
         }
-        // And home, which a person knows the way to.
-        place(player.homeLocationId, PlayerKnowledge.VISITED, "where they live")
+        // And home, and whatever contains it: a person knows the way to their own front door.
+        var home = locations.firstOrNull { it.id == player.homeLocationId }
+        var homeDepth = 0
+        while (home != null && homeDepth < 6) {
+            place(home.id, PlayerKnowledge.VISITED, "where they live")
+            home = home.parentId?.let { id -> locations.firstOrNull { it.id == id } }
+            homeDepth++
+        }
 
+        // The opening scene introduces whoever is in it by name, so the player has met them.
         openingCast.forEach { npc ->
-            rows += PlayerKnowledge.onMeeting(worldId, npc, 0, world.storyTime, emptySet())
+            rows += PlayerKnowledge.onMeeting(worldId, npc, 0, world.storyTime, emptySet(), named = true)
         }
 
         if (rows.isNotEmpty()) repo.saveKnowledge(rows)
@@ -960,6 +1095,37 @@ class WorldForge(
         val corrected = locations.filter { it.discovered != (it.id in known) }
             .map { it.copy(discovered = it.id in known) }
         if (corrected.isNotEmpty()) repo.saveLocations(corrected)
+    }
+
+    /**
+     * What time the world opens at, from whatever the builder said about it.
+     *
+     * The builder writes phrases, not clocks - "late evening", "Day 1, morning" - so the
+     * phrase is read once, here, and never again: from this point the world has a number.
+     */
+    private fun startingMinuteOf(startingTime: String?, opening: String): Long {
+        val text = (startingTime.orEmpty() + " " + opening).lowercase()
+        Regex("\\b(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)\\b").find(text)?.let { match ->
+            var hour = match.groupValues[1].toIntOrNull() ?: 0
+            val minute = match.groupValues[2].toIntOrNull() ?: 0
+            if (match.groupValues[3].lowercase() == "pm" && hour < 12) hour += 12
+            if (match.groupValues[3].lowercase() == "am" && hour == 12) hour = 0
+            return hour * 60L + minute
+        }
+        return when {
+            text.contains("midnight") -> 0L
+            text.contains("dawn") || text.contains("sunrise") -> 6 * 60L
+            text.contains("late morning") -> 11 * 60L
+            text.contains("morning") -> 8 * 60L
+            text.contains("midday") || text.contains("noon") -> 12 * 60L
+            text.contains("afternoon") -> 15 * 60L
+            text.contains("dusk") || text.contains("sunset") -> 19 * 60L
+            text.contains("late evening") -> 22 * 60L
+            text.contains("evening") -> 20 * 60L
+            text.contains("late night") -> 1 * 60L
+            text.contains("night") -> 23 * 60L
+            else -> 9 * 60L
+        }
     }
 
     private companion object {

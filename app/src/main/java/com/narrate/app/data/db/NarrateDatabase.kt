@@ -26,9 +26,10 @@ import com.narrate.app.data.entity.*
         VisualIdentityEntity::class,
         ContinuityIssueEntity::class,
         UsageEntity::class,
-        KnowledgeEntity::class
+        KnowledgeEntity::class,
+        EventEntity::class
     ],
-    version = 6,
+    version = 7,
     // The schema is written to app/schemas on every build. Every version needs a migration,
     // and a migration is only as good as the record of what it is migrating from.
     exportSchema = true
@@ -50,6 +51,7 @@ abstract class NarrateDatabase : RoomDatabase() {
     abstract fun continuityIssueDao(): ContinuityIssueDao
     abstract fun usageDao(): UsageDao
     abstract fun knowledgeDao(): KnowledgeDao
+    abstract fun eventDao(): EventDao
 
     companion object {
         @Volatile private var instance: NarrateDatabase? = null
@@ -174,6 +176,71 @@ abstract class NarrateDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * One authoritative clock, a calendar to point it at, clothing that knows when it was
+         * put on, and geography that is geography rather than a tree.
+         *
+         * An existing save is anchored at its current day and time: the clock is set from the
+         * day number and time of day it already had, on a calendar epoch chosen so the world
+         * keeps running from where the player left it.
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE worlds ADD COLUMN clockMinute INTEGER NOT NULL DEFAULT 1260")
+                db.execSQL("ALTER TABLE worlds ADD COLUMN calendarEpoch TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE characters ADD COLUMN outfitSetAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE characters ADD COLUMN outfitContext TEXT NOT NULL DEFAULT 'CASUAL'")
+                db.execSQL("ALTER TABLE characters ADD COLUMN temporaryLook TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE locations ADD COLUMN spanAngle REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE locations ADD COLUMN spanLength REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE locations ADD COLUMN streetId TEXT")
+                db.execSQL("ALTER TABLE locations ADD COLUMN addressNumber INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'OBSERVED'")
+                // What the player wrote keeps the standing it always had.
+                db.execSQL("UPDATE memories SET provenance = 'PLAYER_CANON' WHERE kind = 'CANON'")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS events (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        worldId TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        description TEXT NOT NULL DEFAULT '',
+                        kind TEXT NOT NULL DEFAULT 'PLAN',
+                        startMinute INTEGER NOT NULL DEFAULT 0,
+                        durationMinutes INTEGER NOT NULL DEFAULT 60,
+                        recurrence TEXT NOT NULL DEFAULT '',
+                        locationId TEXT,
+                        locationName TEXT NOT NULL DEFAULT '',
+                        withNames TEXT NOT NULL DEFAULT '',
+                        status TEXT NOT NULL DEFAULT 'SCHEDULED',
+                        knownToPlayer INTEGER NOT NULL DEFAULT 1,
+                        forPlayer INTEGER NOT NULL DEFAULT 1,
+                        createdTurn INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_events_worldId ON events(worldId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_events_startMinute ON events(startMinute)")
+
+                // Anchor the clock where the world already is, so no save loses its evening.
+                db.execSQL(
+                    """
+                    UPDATE worlds SET clockMinute = (MAX(dayNumber, 1) - 1) * 1440 + CASE
+                        WHEN timeOfDay LIKE '%dawn%' OR timeOfDay LIKE '%sunrise%' THEN 330
+                        WHEN timeOfDay LIKE '%morning%' THEN 540
+                        WHEN timeOfDay LIKE '%midday%' OR timeOfDay LIKE '%noon%' THEN 720
+                        WHEN timeOfDay LIKE '%afternoon%' THEN 900
+                        WHEN timeOfDay LIKE '%dusk%' OR timeOfDay LIKE '%sunset%' THEN 1140
+                        WHEN timeOfDay LIKE '%evening%' THEN 1230
+                        WHEN timeOfDay LIKE '%midnight%' THEN 1440
+                        WHEN timeOfDay LIKE '%night%' THEN 1320
+                        ELSE 1260 END
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun get(context: Context): NarrateDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
@@ -181,7 +248,7 @@ abstract class NarrateDatabase : RoomDatabase() {
                 "narrate.db"
             )
                 // A save is the player's world. Never destroy one on a routine upgrade.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
                 .also { instance = it }

@@ -35,7 +35,9 @@ data class WorldSnapshot(
      * Empty on a world built before this existed, which is why [PlayerKnowledge] treats an
      * empty table as "no knowledge system yet" rather than "the player knows nothing".
      */
-    val knowledge: List<KnowledgeEntity> = emptyList()
+    val knowledge: List<KnowledgeEntity> = emptyList(),
+    /** The world's calendar: shifts, classes, plans, deadlines. */
+    val events: List<EventEntity> = emptyList()
 ) {
     val npcs: List<CharacterEntity> get() = characters.filter { !it.isPlayer }
 

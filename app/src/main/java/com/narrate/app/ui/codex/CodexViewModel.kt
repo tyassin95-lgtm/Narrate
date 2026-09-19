@@ -31,6 +31,8 @@ data class CodexUiState(
     val usage: List<UsageEntity> = emptyList(),
     /** What the player's character has actually learned. The codex may show nothing else. */
     val knowledge: List<KnowledgeEntity> = emptyList(),
+    /** The world's diary: shifts, classes, deadlines, and anything arranged with anybody. */
+    val events: List<EventEntity> = emptyList(),
     /** The entity currently being drawn, so its own row can show it is working. */
     val generatingSubjectId: String? = null,
     val message: String? = null
@@ -81,6 +83,21 @@ data class CodexUiState(
     /** True when this world still keeps track of what the player knows. */
     val tracksKnowledge: Boolean get() = !legacy
 
+    /** What is coming, in order, as far as a fortnight out. */
+    val upcomingEvents: List<com.narrate.app.engine.Schedule.Occurrence>
+        get() {
+            val world = world ?: return emptyList()
+            return com.narrate.app.engine.Schedule.upcoming(
+                com.narrate.app.data.repo.WorldSnapshot(
+                    world = world, player = player, characters = characters, locations = locations,
+                    links = links, items = items, factions = factions, relationships = emptyList(),
+                    threads = threads, chapters = chapters, recentTurns = emptyList(),
+                    memories = memories, visualIdentities = emptyList(), knowledge = knowledge,
+                    events = events
+                )
+            )
+        }
+
     /** Things that actually happened in the world and contradicted it. */
     val worldIssues: List<ContinuityIssueEntity>
         get() = issues.filterNot { com.narrate.app.engine.ContinuityGuard.isGenerationNote(it.category) }
@@ -126,9 +143,11 @@ class CodexViewModel(application: Application, private val worldId: String) : An
             repo.observeTurns(worldId),
             repo.observeUsage(worldId)
         ) { chapters, images, issues, turns, usage -> listOf(chapters, images, issues, turns, usage) },
-        repo.observeKnowledge(worldId),
+        combine(repo.observeKnowledge(worldId), repo.observeEvents(worldId)) { learned, events ->
+            learned to events
+        },
         transient
-    ) { first, second, third, learned, flags ->
+    ) { first, second, third, world, flags ->
         @Suppress("UNCHECKED_CAST")
         CodexUiState(
             world = first[0] as WorldEntity?,
@@ -144,7 +163,8 @@ class CodexViewModel(application: Application, private val worldId: String) : An
             issues = third[2] as List<ContinuityIssueEntity>,
             turns = third[3] as List<TurnEntity>,
             usage = third[4] as List<UsageEntity>,
-            knowledge = learned,
+            knowledge = world.first,
+            events = world.second,
             generatingSubjectId = flags.subjectId,
             message = flags.message
         )

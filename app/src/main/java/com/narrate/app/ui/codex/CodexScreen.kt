@@ -29,12 +29,14 @@ import com.narrate.app.ui.settings.UsageBreakdown
 import com.narrate.app.ui.settings.UsageTotals
 import com.narrate.app.ui.components.*
 import com.narrate.app.engine.Possession
+import com.narrate.app.engine.WorldClock
 import com.narrate.app.ui.theme.NarrateColors
 
 private enum class CodexTab(val label: String) {
     OVERVIEW("Overview"),
     CAST("Cast"),
     MAP("Map"),
+    CALENDAR("Calendar"),
     OBJECTS("Objects"),
     THREADS("Threads"),
     JOURNAL("Journal"),
@@ -94,6 +96,7 @@ fun CodexScreen(
                 CodexTab.OVERVIEW -> OverviewTab(state, viewModel, onCharacter)
                 CodexTab.CAST -> CastTab(state, onCharacter)
                 CodexTab.MAP -> MapTab(state, onLocation)
+                CodexTab.CALENDAR -> CalendarTab(state)
                 CodexTab.OBJECTS -> ObjectsTab(state, viewModel)
                 CodexTab.THREADS -> ThreadsTab(state)
                 CodexTab.JOURNAL -> JournalTab(state)
@@ -437,6 +440,88 @@ private fun LocationNode(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+    }
+}
+
+/**
+ * The world's calendar: what is coming, when, and with whom.
+ *
+ * A plan used to live in a sentence inside a thread description, which meant the world could
+ * not tell you when Friday was. Now that arrangements are records on the same clock the world
+ * runs on, they can be looked at - and skipped to.
+ */
+@Composable
+private fun CalendarTab(state: CodexUiState) {
+    val world = state.world
+    if (world == null) {
+        EmptyState("No world", "")
+        return
+    }
+    val now = WorldClock.of(world)
+    val upcoming = state.upcomingEvents
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            Text("Calendar", style = MaterialTheme.typography.titleLarge, color = NarrateColors.TextPrimary)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "It is ${now.full}.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = NarrateColors.Accent
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+        items(upcoming) { occurrence ->
+            val at = WorldClock.stamp(occurrence.startMinute, world)
+            val away = WorldClock.describeGap(occurrence.startMinute - world.clockMinute)
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(NarrateColors.Surface, RoundedCornerShape(8.dp))
+                    .padding(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        occurrence.event.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = NarrateColors.TextPrimary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Pill(occurrence.event.kind.lowercase())
+                }
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    at.full,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NarrateColors.Accent
+                )
+                Text(
+                    listOfNotNull(
+                        "in $away",
+                        occurrence.event.locationName.takeIf { it.isNotBlank() },
+                        occurrence.event.withNames.takeIf { it.isNotBlank() }?.let { "with $it" }
+                    ).joinToString(" - "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NarrateColors.TextMuted
+                )
+                if (occurrence.event.description.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        occurrence.event.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = NarrateColors.TextSecondary
+                    )
+                }
+            }
+        }
+        if (upcoming.isEmpty()) {
+            item {
+                EmptyState(
+                    "Nothing in the diary",
+                    "Shifts, classes and anything you arrange with somebody will appear here " +
+                        "with a real day and time."
+                )
+            }
         }
     }
 }

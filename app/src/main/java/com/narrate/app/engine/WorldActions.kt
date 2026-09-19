@@ -2,19 +2,23 @@ package com.narrate.app.engine
 
 import com.narrate.app.core.truncate
 import com.narrate.app.data.repo.WorldSnapshot
+import java.time.DayOfWeek
+import java.time.format.TextStyle
+import java.util.Locale
 
 /**
- * The things a player does constantly and should never have to spend a suggestion on.
+ * Moving time on purpose.
  *
- * Waiting, going home and sleeping are not decisions. They are the punctuation between
- * decisions, and for most of this app's life they were the only way to get from one scene to
- * the next: the narrator offered "wait a little longer" and the player pressed it, and pressed
- * it again, because otherwise nothing moved. That is the interaction model that made the game
- * tedious, and no amount of better prose fixes it.
+ * "Let time pass" was a button with nothing behind it. The world had no idea what it was
+ * passing time towards, so the narrator did what it could - wrote another minute of the same
+ * evening - and the player pressed it again. In one playthrough it advanced the clock by one
+ * minute and produced a turn about sitting on a step.
  *
- * So they are buttons. They take a turn, they advance the clock by a real amount, they let
- * every routine in the world run while they do it, and they open on the next thing worth
- * reading. The suggested actions are then free to be about things worth choosing.
+ * Skipping time is only meaningful if the world knows what is next, which is what the calendar
+ * is for. These controls are generated from it: the shift that ends at six, Friday at eight
+ * with Liv, tomorrow morning. Where there is nothing scheduled there are still honest answers
+ * - an hour, an evening, tomorrow - but they are offered as what they are rather than dressed
+ * up as a story beat.
  */
 object WorldActions {
 
@@ -26,38 +30,122 @@ object WorldActions {
 
     fun isWorldAction(kind: String): Boolean = kind in kinds
 
+    /**
+     * One thing the player can do with time, ready to put on a button.
+     *
+     * [targetMinute] is where the clock lands. Everything about the turn - how long it takes,
+     * what happens in between, what the narrator is told to write - comes from that, so a
+     * control can never quietly do nothing.
+     */
+    data class TimeOption(
+        val id: String,
+        val label: String,
+        val detail: String,
+        val targetMinute: Long,
+        val kind: String = SKIP
+    )
+
+    /**
+     * What is worth skipping to from here.
+     *
+     * Ordered by how soon it is, with the next real commitment first, because that is almost
+     * always the thing the player pressed the button to reach.
+     */
+    fun options(snapshot: WorldSnapshot): List<TimeOption> {
+        val world = snapshot.world
+        val now = WorldClock.of(world)
+        val options = mutableListOf<TimeOption>()
+
+        // Whatever the player is in the middle of has an end, and that end is a real moment.
+        Schedule.current(snapshot)?.let { running ->
+            val ends = running.startMinute + running.event.durationMinutes
+            if (ends > world.clockMinute) {
+                options += TimeOption(
+                    id = "until-end",
+                    label = "Until ${verbFor(running.event.kind)} ends",
+                    detail = WorldClock.stamp(ends, world).clock,
+                    targetMinute = ends
+                )
+            }
+        }
+
+        // And everything the calendar says is coming.
+        Schedule.upcoming(snapshot).take(3).forEach { occurrence ->
+            val at = WorldClock.stamp(occurrence.startMinute, world)
+            val sameDay = at.dayNumber == now.dayNumber
+            val whenWord = when {
+                sameDay -> at.clock
+                at.dayNumber == now.dayNumber + 1 -> "tomorrow ${at.clock}"
+                else -> "${at.weekday.getDisplayName(TextStyle.FULL, Locale.UK)} ${at.clock}"
+            }
+            options += TimeOption(
+                id = "event-${occurrence.event.id}-${occurrence.startMinute}",
+                label = "To $whenWord",
+                detail = occurrence.event.title.truncate(48),
+                // Arrive a little early rather than exactly on the hour.
+                targetMinute = (occurrence.startMinute - 10).coerceAtLeast(world.clockMinute + 5)
+            )
+        }
+
+        // Then the ordinary answers, which are still honest ones.
+        val minuteOfDay = now.minuteOfDay
+        if (minuteOfDay < 7 * 60 || minuteOfDay >= 22 * 60) {
+            options += TimeOption("morning", "Until morning", "7:00 AM", now.next(7 * 60))
+        } else {
+            if (minuteOfDay < 12 * 60) options += TimeOption("midday", "Until midday", "12:00 PM", now.next(12 * 60))
+            if (minuteOfDay < 18 * 60) options += TimeOption("evening", "Until the evening", "6:00 PM", now.next(18 * 60))
+            options += TimeOption("tomorrow", "Until tomorrow morning", "7:00 AM", now.next(7 * 60))
+        }
+        options += TimeOption("hour", "An hour", WorldClock.stamp(world.clockMinute + 60, world).clock, world.clockMinute + 60)
+        options += TimeOption(
+            "three-hours", "Three hours",
+            WorldClock.stamp(world.clockMinute + 180, world).clock, world.clockMinute + 180
+        )
+
+        return options
+            .filter { it.targetMinute > world.clockMinute }
+            .distinctBy { it.targetMinute / 15 }
+            .sortedBy { it.targetMinute }
+            .take(5)
+    }
+
+    private fun verbFor(kind: String): String = when (kind.uppercase()) {
+        Schedule.SHIFT -> "the shift"
+        Schedule.CLASS -> "the class"
+        Schedule.MEETING -> "the meeting"
+        Schedule.APPOINTMENT -> "the appointment"
+        else -> "this"
+    }
+
     /** What the feed shows as the player's move, so the log reads like the story. */
-    fun playerInput(kind: String, snapshot: WorldSnapshot): String = when (kind) {
-        SKIP -> "Let time pass."
+    fun playerInput(kind: String, snapshot: WorldSnapshot, option: TimeOption? = null): String = when (kind) {
+        SKIP -> option?.let { "Let the time pass ${it.label.lowercase()}." } ?: "Let the time pass."
         HOME -> "Head home."
-        SLEEP -> if (nightAlready(snapshot)) "Go to sleep." else "Rest until the next part of the day."
+        SLEEP -> "Go to sleep."
         else -> ""
     }
 
-    /**
-     * How long the world is allowed to move. The narrator may take more, never less: a skip
-     * that advances the clock four minutes is the thing being replaced.
-     */
-    fun minimumMinutes(kind: String, snapshot: WorldSnapshot): Int = when (kind) {
-        SKIP -> 60
-        HOME -> 20
-        SLEEP -> minutesUntilMorning(snapshot)
-        else -> 0
+    /** Where the clock lands. Never a guess, and never zero. */
+    fun targetMinute(kind: String, snapshot: WorldSnapshot, option: TimeOption?): Long {
+        val world = snapshot.world
+        val now = WorldClock.of(world)
+        return when (kind) {
+            SKIP -> option?.targetMinute ?: (world.clockMinute + 60)
+            HOME -> {
+                val home = snapshot.locationById(snapshot.player?.homeLocationId)
+                world.clockMinute + Geography.travelMinutes(snapshot.currentLocation, home).coerceAtLeast(5)
+            }
+            SLEEP -> {
+                // A sensible night: to seven in the morning, or a proper stretch if they are
+                // going to bed at four, which happens.
+                val wake = now.next(7 * 60)
+                val length = wake - world.clockMinute
+                if (length < 4 * 60) world.clockMinute + 6 * 60 else wake
+            }
+            else -> world.clockMinute
+        }
     }
 
-    private fun nightAlready(snapshot: WorldSnapshot): Boolean {
-        val reading = StoryClock.read(snapshot.world.storyTime) ?: return true
-        return reading.minutes >= 21 * 60 || reading.minutes < 5 * 60
-    }
-
-    private fun minutesUntilMorning(snapshot: WorldSnapshot): Int {
-        val reading = StoryClock.read(snapshot.world.storyTime) ?: return 8 * 60
-        val morning = 7 * 60
-        return if (reading.minutes < morning) morning - reading.minutes
-        else (24 * 60 - reading.minutes) + morning
-    }
-
-    /** Whether the button is worth offering at all, given where the player is standing. */
     fun available(kind: String, snapshot: WorldSnapshot): Boolean = when (kind) {
         HOME -> {
             val home = snapshot.player?.homeLocationId
@@ -69,81 +157,75 @@ object WorldActions {
     /**
      * The instruction for one of these turns.
      *
-     * The shape matters: it is not "narrate an hour of waiting", it is "put the hour behind us
-     * in a line and open on what is different". A skip that produces five paragraphs about a
-     * quiet room has done the opposite of what the player pressed it for.
+     * The shape matters: not "narrate an hour of waiting" but "put the hour behind us and open
+     * at the moment that matters". A skip that produces five paragraphs about a quiet room has
+     * done the opposite of what the player pressed it for.
      */
-    fun instruction(kind: String, snapshot: WorldSnapshot): String {
-        val minutes = minimumMinutes(kind, snapshot)
+    fun instruction(kind: String, snapshot: WorldSnapshot, option: TimeOption?): String {
+        val world = snapshot.world
+        val target = targetMinute(kind, snapshot, option)
+        val minutes = target - world.clockMinute
+        val landing = WorldClock.stamp(target, world)
         val player = snapshot.player?.name ?: "The player"
         val homeName = snapshot.locationName(snapshot.player?.homeLocationId)
+        val next = Schedule.upcoming(snapshot).firstOrNull { it.startMinute <= target + 60 }
+
         return buildString {
-            appendLine("## THE PLAYER USED A TIME CONTROL - THIS IS NOT AN ORDINARY TURN")
+            appendLine("## A TIME CONTROL - THIS TURN COVERS ${WorldClock.describeGap(minutes).uppercase()}")
+            appendLine("It is ${WorldClock.of(world).full}. This turn ends at ${landing.full}.")
+            appendLine()
             when (kind) {
                 SKIP -> {
                     appendLine(
-                        "$player is letting time pass. They are not interested in the next five " +
-                            "minutes; they want the next thing that is actually worth their attention."
+                        "$player is letting the time go by" +
+                            (option?.detail?.takeIf { it.isNotBlank() }?.let { " to reach: $it" } ?: "") + "."
                     )
                     appendLine(
-                        "Move story_time forward by at least ${describe(minutes)}. Cover the gap " +
-                            "in one or two sentences at most - what they did with it, in summary - " +
-                            "and then open the scene at the moment something is different."
+                        "Cover the whole interval in a short paragraph - what they did with it, " +
+                            "in summary, and anything they would have noticed - and then open the " +
+                            "scene at ${landing.clock}, where something is actually happening."
                     )
                 }
                 HOME -> {
                     appendLine("$player is going home${if (homeName != "unknown") " to $homeName" else ""}.")
                     appendLine(
-                        "Cover the journey in a line or two unless something genuinely happens on " +
-                            "the way, move them there in the state block, and advance story_time by " +
-                            "however long the trip actually takes (at least ${describe(minutes)})."
-                    )
-                    appendLine(
-                        "Then write arriving: what the place is like at this hour, what is waiting, " +
-                            "what they notice that was not there this morning."
+                        "The journey takes ${WorldClock.describeGap(minutes)}. Give it a line or " +
+                            "two unless something genuinely happens on the way, move them there " +
+                            "in the state block, and write arriving: what the place is like at " +
+                            "this hour, what is waiting, what is different."
                     )
                 }
                 SLEEP -> {
-                    appendLine("$player is sleeping.")
+                    appendLine("$player is sleeping, and wakes at ${landing.full}.")
                     appendLine(
                         "Pass the night in a few sentences - how they slept, anything that woke " +
-                            "them, a dream only if it earns its place - and advance story_time to " +
-                            "the morning (at least ${describe(minutes)} on, with the day number " +
-                            "incremented if it crosses midnight)."
-                    )
-                    appendLine(
-                        "Open the turn on waking: the new day, what is already different, what is " +
-                            "on today. Everybody else has had the night too."
+                            "them - and open on waking. They are not in yesterday's clothes: " +
+                            "record what they change into in \"outfits\"."
                     )
                 }
             }
             appendLine()
             appendLine(
-                "While that time passed, the world ran. Every NPC followed their routine, threads " +
-                    "moved, and things happened without the player. Apply the ones that make sense " +
-                    "from the offscreen list, move the people who would have moved, and record it " +
-                    "all in the state block - people who are no longer where they were, anything " +
-                    "that changed, anything waiting."
+                "Set \"scene\": {\"minutes\": $minutes}. That is the whole interval, and the app " +
+                    "will land the clock on ${landing.clock} whatever you write."
             )
             appendLine(
-                "The player learns about it only through evidence: an empty chair, a message, a " +
-                    "shop shut, somebody who was not there before."
+                "The world ran while it passed. Everybody followed their routine, threads moved, " +
+                    "things happened without the player. Move whoever would have moved, record " +
+                    "what changed, and let the player find out through evidence rather than " +
+                    "through being told."
             )
-            appendLine(
-                "End this turn somewhere with something in it. A time control that lands the " +
-                    "player in another empty room has wasted the press."
-            )
-            snapshot.threads.filter { it.status == "ACTIVE" }.maxByOrNull { it.urgency }?.let { thread ->
+            next?.let {
+                val at = WorldClock.stamp(it.startMinute, world)
                 appendLine(
-                    "If anything was due to happen, it was this: ${thread.title.truncate(80)}."
+                    "Due around now: ${it.event.title} at ${at.clock}" +
+                        it.event.locationName.takeIf { name -> name.isNotBlank() }?.let { name -> " ($name)" }.orEmpty() + "."
                 )
             }
+            appendLine("End somewhere with something in it. A skip that lands in an empty room has wasted the press.")
         }
     }
 
-    private fun describe(minutes: Int): String = when {
-        minutes >= 120 -> "${minutes / 60} hours"
-        minutes >= 60 -> "an hour"
-        else -> "$minutes minutes"
-    }
+    /** Short label for a weekday, used when a control points at another day. */
+    fun weekdayLabel(day: DayOfWeek): String = day.getDisplayName(TextStyle.FULL, Locale.UK)
 }

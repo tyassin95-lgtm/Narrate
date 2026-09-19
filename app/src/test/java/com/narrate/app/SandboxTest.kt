@@ -21,9 +21,9 @@ import com.narrate.app.engine.StateDelta
 import com.narrate.app.engine.StoryClock
 import com.narrate.app.engine.TurnParser
 import com.narrate.app.engine.WorldActions
+import com.narrate.app.engine.WorldClock
 import com.narrate.app.engine.WorldDigest
-import com.narrate.app.ui.codex.mapArrangement
-import com.narrate.app.ui.codex.pinGap
+import com.narrate.app.ui.codex.townPlan
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -68,12 +68,12 @@ class SandboxTest {
 
     private fun snapshot(
         items: List<ItemEntity> = emptyList(),
-        storyTime: String = "Day 1, 9:00 PM",
+        clockMinute: Long = 21 * 60,
         turns: List<TurnEntity> = emptyList()
     ) = WorldSnapshot(
         world = WorldEntity(
             id = "w", name = "Calder City", currentLocationId = "street",
-            storyTime = storyTime, turnCount = turns.size
+            clockMinute = clockMinute, calendarEpoch = "2025-09-05", turnCount = turns.size
         ),
         player = player,
         characters = listOf(player, liv),
@@ -198,17 +198,19 @@ class SandboxTest {
     // --- Time ----------------------------------------------------------------------------
 
     @Test
-    fun `the time controls promise real time`() {
-        val evening = snapshot(storyTime = "Day 1, 9:00 PM")
-        assertEquals(60, WorldActions.minimumMinutes(WorldActions.SKIP, evening))
+    fun `the time controls land on a real moment rather than a guess`() {
+        val evening = snapshot(clockMinute = 21 * 60)
+        val sleepTarget = WorldActions.targetMinute(WorldActions.SLEEP, evening, null)
         assertEquals(
             "sleeping at nine at night reaches seven the next morning",
-            10 * 60,
-            WorldActions.minimumMinutes(WorldActions.SLEEP, evening)
+            WorldClock.DAY + 7 * 60L,
+            sleepTarget
         )
-        assertEquals("Day 2, 7:00 AM", StoryClock.advance("Day 1, 9:00 PM", 10 * 60))
-        assertEquals("Day 1, 10:30 AM", StoryClock.advance("Day 1, 9:30 AM", 60))
-        assertEquals("a world that writes 24-hour time keeps it", "Day 1, 14:05", StoryClock.advance("Day 1, 13:05", 60))
+        assertEquals(
+            "and a skip with no option behind it is still an hour, never a minute",
+            21 * 60L + 60,
+            WorldActions.targetMinute(WorldActions.SKIP, evening, null)
+        )
     }
 
     @Test
@@ -225,16 +227,16 @@ class SandboxTest {
 
     @Test
     fun `a time control tells the narrator to move the world, not to describe the wait`() {
-        val instruction = WorldActions.instruction(WorldActions.SKIP, snapshot())
-        assertTrue(instruction.contains("THE PLAYER USED A TIME CONTROL"))
-        assertTrue(instruction.contains("Cover the gap"))
-        assertTrue(instruction.contains("the moment something is different"))
-        assertTrue("the world runs while it passes", instruction.contains("Every NPC followed their routine"))
+        val instruction = WorldActions.instruction(WorldActions.SKIP, snapshot(), null)
+        assertTrue(instruction.contains("A TIME CONTROL"))
+        assertTrue("it names the moment it lands on", instruction.contains("This turn ends at"))
+        assertTrue(instruction.contains("Cover the whole interval"))
+        assertTrue("the world runs while it passes", instruction.contains("The world ran while it passed"))
         assertTrue(instruction.contains("has wasted the press"))
 
-        val sleep = WorldActions.instruction(WorldActions.SLEEP, snapshot())
-        assertTrue(sleep.contains("advance story_time to"))
-        assertTrue(sleep.contains("Open the turn on waking"))
+        val sleep = WorldActions.instruction(WorldActions.SLEEP, snapshot(), null)
+        assertTrue(sleep.contains("is sleeping, and wakes at"))
+        assertTrue("and they do not wake in yesterday's clothes", sleep.contains("\"outfits\""))
     }
 
     // --- Suggestions ---------------------------------------------------------------------
@@ -278,7 +280,7 @@ class SandboxTest {
     fun `the narrator is told that time is a button and a chore is not a choice`() {
         val prompt = Prompts.gameMaster(WorldEntity(id = "w", name = "Calder City"))
         assertTrue(prompt.contains("separate controls for passing time"))
-        assertTrue(prompt.contains("it is not a choice, it is a chore"))
+        assertTrue(prompt.contains("is not a choice, it is a chore"))
         assertTrue(prompt.contains("orders their coffee in the narration"))
     }
 
@@ -364,24 +366,40 @@ class SandboxTest {
     }
 
     @Test
-    fun `no two pins on the drawn map land on top of each other`() {
-        // The old map put every place wherever the depth-first walk reached, which with a
-        // dozen locations was a wall of overlapping labels joined by crossing lines.
-        val cluster = (0 until 12).map { index ->
+    fun `the drawn map is streets with buildings on them, not boxes`() {
+        // Two earlier designs drew the containment column: a family tree, then nested boxes.
+        // Neither was a map. This one is roads, and the things standing on them.
+        val maple = LocationEntity(
+            id = "maple", worldId = "w", name = "Maple Street", type = "STREET",
+            parentId = "district", mapX = 0.5f, mapY = 0.5f, spanAngle = 0f, spanLength = 0.34f
+        )
+        val houses = listOf(1247, 1249, 1251).map { number ->
+            val (x, y) = com.narrate.app.engine.Geography.positionOnStreet(maple, number, "house")
             LocationEntity(
-                id = "p$index", worldId = "w", name = "Place $index", parentId = "district",
-                mapX = 0.5f + index * 0.002f, mapY = 0.5f + index * 0.001f
+                id = "h$number", worldId = "w", name = "$number Maple Street", type = "BUILDING",
+                parentId = "district", streetId = "maple", addressNumber = number,
+                mapX = x, mapY = y, visited = number == 1247
             )
         }
-        val arrangement = mapArrangement(listOf(district) + cluster)
-        assertEquals("every place is placed", 12, arrangement.size)
-        cluster.forEach { a ->
-            cluster.filter { it.id != a.id }.forEach { b ->
-                assertTrue(
-                    "${a.name} and ${b.name} are on top of each other",
-                    pinGap(arrangement, a.id, b.id) > 20f
-                )
-            }
-        }
+        val kitchen = LocationEntity(
+            id = "kitchen", worldId = "w", name = "The kitchen", type = "ROOM", parentId = "h1247"
+        )
+
+        val plan = townPlan(listOf(district, maple) + houses + kitchen)
+
+        assertEquals("the street is drawn as a line", 1, plan.streets.size)
+        assertTrue("running the way the town says it runs", plan.streets.single().from.y == plan.streets.single().to.y)
+        assertEquals("every building on it is a mark", 3, plan.pins.size)
+        assertTrue(
+            "and a kitchen is not a place on a city map",
+            plan.pins.none { it.location.type == "ROOM" }
+        )
+        assertTrue(
+            "the district is a label over its own places, not a box round them",
+            plan.districts.single().first == "Eastgate"
+        )
+        // House numbers put them in order along the road, which is what "two doors down" means.
+        val xs = houses.map { it.mapX }
+        assertEquals("ordered by number", xs.sorted(), xs)
     }
 }

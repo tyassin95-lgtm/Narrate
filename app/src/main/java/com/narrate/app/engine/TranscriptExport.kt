@@ -44,6 +44,7 @@ object TranscriptExport {
         val items = repo.itemDao.all(worldId)
         val threads = repo.threadDao.all(worldId)
         val knowledge = repo.knowledgeDao.all(worldId)
+        val events = repo.eventDao.all(worldId)
         val memories = repo.memoryDao.all(worldId).groupBy { it.turnIndex }
         val chapters = repo.chapterDao.all(worldId).sortedBy { it.fromTurn }
 
@@ -55,7 +56,7 @@ object TranscriptExport {
             appendLine("| | |")
             appendLine("|---|---|")
             appendLine("| Turns played | ${world.turnCount} |")
-            appendLine("| Story time | ${world.storyTime} |")
+            appendLine("| Story time | ${WorldClock.of(world).full} |")
             appendLine("| Pacing | ${PlayStyle.from(world.playStyle).label} |")
             appendLine("| Narration length | ${world.narrationLength} |")
             if (world.genre.isNotBlank()) appendLine("| Genre | ${world.genre} |")
@@ -201,6 +202,20 @@ object TranscriptExport {
                     appendLine("Never met: " + hidden.joinToString(", ") { it.name } + ".")
                     appendLine()
                 }
+            }
+            if (events.isNotEmpty()) {
+                appendLine("### The calendar")
+                appendLine()
+                events.sortedBy { it.startMinute }.forEach { event ->
+                    val at = WorldClock.stamp(event.startMinute, world)
+                    appendLine(
+                        "- **${event.title}** [${event.kind.lowercase()}]: ${at.full}" +
+                            event.recurrence.takeIf { it.isNotBlank() }?.let { ", repeating $it" }.orEmpty() +
+                            event.withNames.takeIf { it.isNotBlank() }?.let { ", with $it" }.orEmpty() +
+                            " (${event.status.lowercase()})"
+                    )
+                }
+                appendLine()
             }
             if (threads.isNotEmpty()) {
                 appendLine("### Threads")

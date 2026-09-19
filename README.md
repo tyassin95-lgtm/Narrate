@@ -12,6 +12,29 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
 
 ## What it does
 
+- **A turn is a scene, not a sentence.** What you do plays out to wherever it naturally gets
+  to: the walk home is the walk home, with the conversation on the way and the arrival at the
+  end. The turn stops when something is actually being decided - an offer, a question only you
+  can answer, an opportunity, an interruption, a discovery - and not because somebody finished
+  speaking. You can still take the wheel at any moment by typing; what you no longer have to do
+  is hand-operate an ordinary evening one sentence at a time.
+- **One clock, and a calendar it points at.** The world keeps a single authoritative date and
+  time. The narrator never writes one: it reports how long its beat took, and the world moves.
+  Sleeping cannot leave you on the same day, a skip cannot advance four minutes, and Friday is
+  a real date. Anything anybody arranges - a shift, a class, a deadline, eight o'clock with
+  somebody - becomes a calendar record you can look at.
+- **Time controls that know what is next.** Skip time offers what is actually coming: until the
+  shift ends, to Friday 8 PM for the thing in your diary, until tomorrow morning, an hour. Go
+  home works out the real travel time and takes you there. Sleep takes the night and wakes you
+  on the right date in different clothes.
+- **Suggestions are decisions, and there may be one of them.** There is no target count and no
+  filler to reach it; a scene that has finished offers none at all. Options are compared by what
+  they *mean*, so six wordings of "say goodnight" are one option, and asking again about a
+  message she has already explained is refused.
+- **Clothes know what day it is.** An outfit is state with a time on it - what it is, when it
+  went on, what occasion it was for - and glitter, makeup and wet hair expire. People change at
+  real moments: getting home, sleeping, a shift, going out. Nobody is described four days later
+  in what they wore to a party, and nobody gets a brand new outfit every turn either.
 - **You know what your character knows.** The world is generated whole - every street, every
   person's history, every secret - because the simulation needs all of it. None of it is
   yours. A new world opens with your own street on the map and nobody in the cast but the
@@ -20,17 +43,11 @@ and model **you** choose. Narrate supplies the structure, the persistence and th
   hiding arrive only when something in the story hands them over, and the codex records which
   and how. The map, the cast, the suggested actions and the narrator's own instructions all
   read from that one record, so nothing leaks just because it exists in a column.
-- **A map, not a corkboard.** Places sit where they were found - beside what they hang off,
-  in the direction the story said, as far away as the travel time implies - and what is inside
-  what is drawn by enclosing it, not by a line pointing at it. No crossing wires, and nowhere
-  on it you have not been or heard of.
-- **Time is a button.** Skip time, go home and sleep are controls, not suggestions. They take
-  a turn, move the clock by hours rather than minutes whatever the narrator does, let every
-  routine in the world run while they pass, and open on the next thing worth reading. Nobody
-  has to choose "wait a little longer" off a menu again.
-- **Suggestions are decisions.** Drinking, ordering, sitting down, looking around, checking
-  the time and turning a page are prose, and they are refused outright. What is left is meant
-  to be something you want to do: a question with a cost, a risk, a move, a door.
+- **A map of a town.** Streets are lines, buildings stand on them in the order their numbers
+  put them, districts are labels over their own places rather than boxes drawn round them, and
+  a kitchen is not a pin on a city map. Where somewhere sits comes from its address, its street
+  and how far the story said it was - never from where the screen had room. Nowhere is on it
+  that you have not been or heard of.
 - **It is your sandbox.** The world plays out what you type - reckless, cruel, dishonest,
   explicit, illegal, whatever a person in that situation might actually do - and answers with
   consequences rather than refusals. If the model you chose declines, the app says so plainly,
@@ -295,7 +312,7 @@ echo "sdk.dir=/path/to/your/Android/sdk" > local.properties
 ./scripts/generate-keystore.sh      # optional: your own release signing key
 ./gradlew assembleRelease           # app/build/outputs/apk/release/app-release.apk
 ./gradlew assembleDebug             # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest         # 399 tests covering parsing, continuity, knowledge, canon, imagery, cost and persistence
+./gradlew testDebugUnitTest         # 422 tests covering the gameplay loop, time, knowledge, continuity, canon, imagery and persistence
 ```
 
 Keep the keystore. Android identifies an app by its signing key, so a release built with a
@@ -362,7 +379,7 @@ com.narrate.app
 
 ## Tests
 
-`./gradlew testDebugUnitTest` runs 399 tests, including Robolectric tests that drive a real Room
+`./gradlew testDebugUnitTest` runs 422 tests, including Robolectric tests that drive a real Room
 database end to end: a scripted narrator reply goes in, and the tests assert the save file comes
 out correct — the player moves, a new character is created where they should be, memories and
 threads are recorded, near-duplicate characters are merged, an unexplained teleport is flagged and
@@ -481,3 +498,29 @@ retried once with the fiction restated, kept out of the save, and reported witho
 the player typed - while a character saying "I can't help you with that" is left alone as the
 scene it is. And the drawn map is tested for the thing a picture has to be: twelve places
 recorded within two hundredths of each other still come out as twelve readable pins.
+
+A forty-one turn playthrough then made the point that the previous release had not: the world
+was consistent and the game was not fun, and the reason was the interaction model rather than
+any individual bug. Thirteen turns and twenty-three minutes of story time to get along one
+pavement. Nine more to say goodnight on a doorstep. A day number that never advanced through a
+night's sleep while the narration talked about Friday. A skip control that moved the clock by
+one minute. Six wordings of "say goodnight" across the menus, three of "what about Friday", not
+one of them a string duplicate. A woman heard through an upstairs window who instantly acquired
+a name, a face and a job. A party dress still being described four days later. Two rows in the
+cast for the same doctor.
+
+So the last set of tests is about the architecture that replaced it, and they are written from
+that transcript. A turn is a beat now, and the tests check the narrator is told so and that a
+finished scene may offer nothing rather than a menu of chores. Time is one number: the day, the
+weekday, the hour and the part of the day all derive from it, a night's sleep cannot land on the
+same day, and a beat that claims no time at all is given some. Arrangements become dates -
+"Friday 8 PM" resolves to a real moment a week out - and the time controls are generated from
+the calendar, so "to Friday 8:00 PM, See Liv" exists when the diary has it and plain hours when
+it does not. Suggestions are compared by meaning: the four real goodnights from the transcript
+collapse to one, and a question asked two turns ago is refused however it is reworded. Knowing
+somebody has degrees, and the tests walk them - a voice through a window is a voice, a text is a
+name and a number, and neither is a face. Two rows for one doctor merge, keeping the fuller name
+and everything either of them knew. Clothes have a time on them, so a party dress goes stale and
+glitter expires. And the town is a town: a house number puts a building on a street in order,
+travel time comes from where places actually are, and a discovered address lands on the road it
+names rather than wherever the map had space.

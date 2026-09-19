@@ -211,7 +211,8 @@ class MigrationTest {
                 NarrateDatabase.MIGRATION_2_3,
                 NarrateDatabase.MIGRATION_3_4,
                 NarrateDatabase.MIGRATION_4_5,
-                NarrateDatabase.MIGRATION_5_6
+                NarrateDatabase.MIGRATION_5_6,
+                NarrateDatabase.MIGRATION_6_7
             )
             .build()
 
@@ -231,50 +232,48 @@ class MigrationTest {
         val raw = FrameworkSQLiteOpenHelperFactory().create(
             SupportSQLiteOpenHelper.Configuration.builder(context)
                 .name(REAL_DB)
-                .callback(object : SupportSQLiteOpenHelper.Callback(6) {
+                .callback(object : SupportSQLiteOpenHelper.Callback(7) {
                     override fun onCreate(db: SupportSQLiteDatabase) = Unit
                     override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
                 })
                 .build()
         )
         raw.writableDatabase.use { db ->
-            val tableSql = db.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='items'")
-                .use { it.moveToFirst(); it.getString(0) }
-            val indexSql = db.query("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='items' AND sql IS NOT NULL")
-                .use { cursor -> generateSequence { if (cursor.moveToNext()) cursor.getString(0) else null }.toList() }
-            val columns = db.query("PRAGMA table_info(items)").use { cursor ->
-                generateSequence { if (cursor.moveToNext()) cursor.getString(1) else null }.toList()
-            }.filter { it != "ownerId" && it != "possession" && it != "history" }
-            val kept = columns.joinToString(", ") { "`$it`" }
-
-            db.execSQL("ALTER TABLE items RENAME TO items_upgraded")
-            // Everything the later versions added, taken back out, so what is left is what a
-            // version 3 save actually looked like.
-            val threeSql = listOf("ownerId", "possession", "history").fold(tableSql) { sql, column ->
-                sql.replace(Regex(",\\s*`?$column`?[^,)]*"), "")
+            /**
+             * Takes a table back to the shape version 3 left it in.
+             *
+             * Every release since has added columns; the only honest way to test the upgrade a
+             * real install performs is to remove them again and let Room's own validator judge
+             * what the migrations put back.
+             */
+            fun rollBack(table: String, added: List<String>) {
+                val tableSql = db.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='$table'")
+                    .use { if (it.moveToFirst()) it.getString(0) else null } ?: return
+                val indexSql = db.query(
+                    "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='$table' AND sql IS NOT NULL"
+                ).use { cursor -> generateSequence { if (cursor.moveToNext()) cursor.getString(0) else null }.toList() }
+                val kept = db.query("PRAGMA table_info($table)").use { cursor ->
+                    generateSequence { if (cursor.moveToNext()) cursor.getString(1) else null }.toList()
+                }.filter { it !in added }
+                val keptSql = kept.joinToString(", ") { "`$it`" }
+                val olderSql = added.fold(tableSql) { sql, column ->
+                    sql.replace(Regex(",\\s*`?$column`?[^,)]*"), "")
+                }
+                db.execSQL("ALTER TABLE $table RENAME TO ${table}_upgraded")
+                db.execSQL(olderSql)
+                db.execSQL("INSERT INTO $table ($keptSql) SELECT $keptSql FROM ${table}_upgraded")
+                db.execSQL("DROP TABLE ${table}_upgraded")
+                indexSql.forEach { db.execSQL(it) }
             }
-            db.execSQL(threeSql)
-            db.execSQL("INSERT INTO items ($kept) SELECT $kept FROM items_upgraded")
-            db.execSQL("DROP TABLE items_upgraded")
-            indexSql.forEach { db.execSQL(it) }
 
-            // And version 3's characters table, which knew nothing about contact details.
-            val charactersSql = db.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='characters'")
-                .use { it.moveToFirst(); it.getString(0) }
-            val characterIndexes = db.query("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='characters' AND sql IS NOT NULL")
-                .use { cursor -> generateSequence { if (cursor.moveToNext()) cursor.getString(0) else null }.toList() }
-            val characterColumns = db.query("PRAGMA table_info(characters)").use { cursor ->
-                generateSequence { if (cursor.moveToNext()) cursor.getString(1) else null }.toList()
-            }.filter { it != "playerContact" }
-            val keptCharacterColumns = characterColumns.joinToString(", ") { "`$it`" }
-            db.execSQL("ALTER TABLE characters RENAME TO characters_upgraded")
-            db.execSQL(charactersSql.replace(Regex(",\\s*`?playerContact`?[^,)]*"), ""))
-            db.execSQL("INSERT INTO characters ($keptCharacterColumns) SELECT $keptCharacterColumns FROM characters_upgraded")
-            db.execSQL("DROP TABLE characters_upgraded")
-            characterIndexes.forEach { db.execSQL(it) }
+            rollBack("items", listOf("ownerId", "possession", "history"))
+            rollBack("characters", listOf("playerContact", "outfitSetAt", "outfitContext", "temporaryLook"))
+            rollBack("worlds", listOf("clockMinute", "calendarEpoch"))
+            rollBack("locations", listOf("spanAngle", "spanLength", "streetId", "addressNumber"))
+            rollBack("memories", listOf("provenance"))
 
-            // Version 3 had no knowledge table either.
             db.execSQL("DROP TABLE IF EXISTS player_knowledge")
+            db.execSQL("DROP TABLE IF EXISTS events")
             db.execSQL("PRAGMA user_version = 3")
         }
 

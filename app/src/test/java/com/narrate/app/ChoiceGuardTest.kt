@@ -161,11 +161,19 @@ class ChoiceGuardTest {
         val verdict = vet(
             "\"Are you okay? You look frozen. Do you want to sit down?\"",
             "Ask where she is coming from and whether anything happened.",
-            "Say nothing and let her decide whether she wants company.",
             "Walk on and leave her to it."
         )
-        assertEquals(4, verdict.kept.size)
+        assertEquals(3, verdict.kept.size)
         assertTrue(!verdict.hasProblems)
+    }
+
+    @Test
+    fun `saying nothing is not one of the things worth offering`() {
+        // It was on the menu again and again, in five wordings, in a real playthrough. It is
+        // not a decision; it is the absence of one, and it belongs in the prose.
+        val verdict = vet("Say nothing and let her decide whether she wants company.")
+        assertTrue(verdict.kept.isEmpty())
+        assertEquals("filler", verdict.rejected.single().category)
     }
 
     @Test
